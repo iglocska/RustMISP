@@ -218,34 +218,34 @@ PHASE 4: ADMINISTRATION
 ================================================================================
 
 --- Iteration 8: Organisations, Users, Roles ---
-[ ] Implement MispOrganisation struct (serde)
-[ ] Implement organisations(scope, search) - GET /organisations/index
-[ ] Implement get_organisation(id) - GET /organisations/view/{id}
-[ ] Implement organisation_exists(id) - HEAD /organisations/view/{id}
-[ ] Implement add_organisation(org) - POST /admin/organisations/add
-[ ] Implement update_organisation(org) - POST /admin/organisations/edit/{id}
-[ ] Implement delete_organisation(id) - POST /admin/organisations/delete/{id}
-[ ] Implement MispUser struct (serde)
-[ ] Implement MispRole struct (serde)
-[ ] Implement MispInbox struct (serde)
-[ ] Implement users(search, organisation) - GET /admin/users/index
-[ ] Implement get_user(id) - GET /users/view/{id}
-[ ] Implement get_new_authkey(user) - POST /users/resetauthkey/{id}
-[ ] Implement add_user(user) - POST /admin/users/add
-[ ] Implement update_user(user) - POST /admin/users/edit/{id}
-[ ] Implement delete_user(id) - POST /admin/users/delete/{id}
-[ ] Implement change_user_password(password) - POST /users/change_pw
-[ ] Implement user_registrations() - GET /users/registrations/index
-[ ] Implement accept_user_registration(id, ...) - POST /users/registrations/accept/{id}
-[ ] Implement discard_user_registration(id) - POST /users/registrations/decline/{id}
-[ ] Implement users_heartbeat() - GET /users/heartbeat
-[ ] Implement roles() - GET /roles/index
-[ ] Implement add_role(role) - POST /admin/roles/add
-[ ] Implement update_role(role) - POST /admin/roles/edit/{id}
-[ ] Implement set_default_role(id) - POST /admin/roles/set_default/{id}
-[ ] Implement delete_role(id) - POST /admin/roles/delete/{id}
+[x] Implement MispOrganisation struct (serde)
+[x] Implement organisations(scope, search) - GET /organisations/index
+[x] Implement get_organisation(id) - GET /organisations/view/{id}
+[x] Implement organisation_exists(id) - HEAD /organisations/view/{id}
+[x] Implement add_organisation(org) - POST /admin/organisations/add
+[x] Implement update_organisation(org) - POST /admin/organisations/edit/{id}
+[x] Implement delete_organisation(id) - POST /admin/organisations/delete/{id}
+[x] Implement MispUser struct (serde)
+[x] Implement MispRole struct (serde)
+[x] Implement MispInbox struct (serde)
+[x] Implement users(search, organisation) - GET /admin/users/index
+[x] Implement get_user(id) - GET /users/view/{id}
+[x] Implement get_new_authkey(user) - POST /users/resetauthkey/{id}
+[x] Implement add_user(user) - POST /admin/users/add
+[x] Implement update_user(user) - POST /admin/users/edit/{id}
+[x] Implement delete_user(id) - POST /admin/users/delete/{id}
+[x] Implement change_user_password(password) - POST /users/change_pw
+[x] Implement user_registrations() - GET /users/registrations/index
+[x] Implement accept_user_registration(id, ...) - POST /users/registrations/accept/{id}
+[x] Implement discard_user_registration(id) - POST /users/registrations/decline/{id}
+[x] Implement users_heartbeat() - GET /users/heartbeat
+[x] Implement roles() - GET /roles/index
+[x] Implement add_role(role) - POST /admin/roles/add
+[x] Implement update_role(role) - POST /admin/roles/edit/{id}
+[x] Implement set_default_role(id) - POST /admin/roles/set_default/{id}
+[x] Implement delete_role(id) - POST /admin/roles/delete/{id}
 [ ] Implement register_user() standalone function
-[ ] Unit tests: user/org/role serde round-trips
+[x] Unit tests: user/org/role serde round-trips
 
 --- Iteration 9: Servers, Feeds, Sharing Groups, User Settings ---
 [ ] Implement MispServer struct (serde)

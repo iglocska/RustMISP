@@ -14,8 +14,10 @@ pub use models::galaxy::{
 };
 pub use models::noticelist::MispNoticelist;
 pub use models::object::{MispObject, MispObjectReference, MispObjectTemplate};
+pub use models::organisation::MispOrganisation;
 pub use models::shadow_attribute::MispShadowAttribute;
 pub use models::sighting::MispSighting;
 pub use models::tag::MispTag;
 pub use models::taxonomy::MispTaxonomy;
+pub use models::user::{MispInbox, MispRole, MispUser};
 pub use models::warninglist::MispWarninglist;

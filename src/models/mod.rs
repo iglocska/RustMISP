@@ -6,11 +6,13 @@ pub mod event_report;
 pub mod galaxy;
 pub mod noticelist;
 pub mod object;
+pub mod organisation;
 pub mod serde_helpers;
 pub mod shadow_attribute;
 pub mod sighting;
 pub mod tag;
 pub mod taxonomy;
+pub mod user;
 pub mod warninglist;
 
 pub use attribute::MispAttribute;
@@ -23,8 +25,10 @@ pub use galaxy::{
 };
 pub use noticelist::MispNoticelist;
 pub use object::{MispObject, MispObjectReference, MispObjectTemplate};
+pub use organisation::MispOrganisation;
 pub use shadow_attribute::MispShadowAttribute;
 pub use sighting::MispSighting;
 pub use tag::MispTag;
 pub use taxonomy::MispTaxonomy;
+pub use user::{MispInbox, MispRole, MispUser};
 pub use warninglist::MispWarninglist;

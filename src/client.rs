@@ -14,10 +14,12 @@ use crate::models::event_report::MispEventReport;
 use crate::models::galaxy::{MispGalaxy, MispGalaxyCluster, MispGalaxyClusterRelation};
 use crate::models::noticelist::MispNoticelist;
 use crate::models::object::{MispObject, MispObjectReference, MispObjectTemplate};
+use crate::models::organisation::MispOrganisation;
 use crate::models::shadow_attribute::MispShadowAttribute;
 use crate::models::sighting::MispSighting;
 use crate::models::tag::MispTag;
 use crate::models::taxonomy::MispTaxonomy;
+use crate::models::user::{MispInbox, MispRole, MispUser};
 use crate::models::warninglist::MispWarninglist;
 
 /// Async client for the MISP REST API.
@@ -1494,6 +1496,338 @@ impl MispClient {
     /// Clean all correlation exclusions.
     pub async fn clean_correlation_exclusions(&self) -> MispResult<Value> {
         self.post("correlationExclusions/clean", &serde_json::json!({}))
+            .await
+    }
+
+    // ── Organisations ──────────────────────────────────────────────────
+
+    /// List organisations.
+    ///
+    /// `scope` filters by "local" or "external". `search` filters by name.
+    pub async fn organisations(
+        &self,
+        scope: Option<&str>,
+        search: Option<&str>,
+    ) -> MispResult<Vec<MispOrganisation>> {
+        let mut path = "organisations/index".to_string();
+        let mut params = Vec::new();
+        if let Some(s) = scope {
+            params.push(format!("scope:{s}"));
+        }
+        if let Some(s) = search {
+            params.push(format!("searchall:{s}"));
+        }
+        if !params.is_empty() {
+            path = format!("{}/{}", path, params.join("/"));
+        }
+        let json = self.get(&path).await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut orgs = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("Organisation").is_some() {
+                &item["Organisation"]
+            } else {
+                item
+            };
+            let o: MispOrganisation = serde_json::from_value(val.clone())?;
+            orgs.push(o);
+        }
+        Ok(orgs)
+    }
+
+    /// Get a single organisation by ID.
+    pub async fn get_organisation(&self, id: i64) -> MispResult<MispOrganisation> {
+        let json = self.get(&format!("organisations/view/{id}")).await?;
+        let val = if json.get("Organisation").is_some() {
+            &json["Organisation"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Check if an organisation exists by ID.
+    pub async fn organisation_exists(&self, id: i64) -> MispResult<bool> {
+        self.head(&format!("organisations/view/{id}")).await
+    }
+
+    /// Create a new organisation (requires admin).
+    pub async fn add_organisation(&self, org: &MispOrganisation) -> MispResult<MispOrganisation> {
+        let body = serde_json::json!({"Organisation": org});
+        let json = self.post("admin/organisations/add", &body).await?;
+        let val = if json.get("Organisation").is_some() {
+            &json["Organisation"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Update an existing organisation (requires admin).
+    pub async fn update_organisation(
+        &self,
+        org: &MispOrganisation,
+    ) -> MispResult<MispOrganisation> {
+        let id = org.id.ok_or_else(|| MispError::MissingField("id".into()))?;
+        let body = serde_json::json!({"Organisation": org});
+        let json = self
+            .post(&format!("admin/organisations/edit/{id}"), &body)
+            .await?;
+        let val = if json.get("Organisation").is_some() {
+            &json["Organisation"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Delete an organisation by ID (requires admin).
+    pub async fn delete_organisation(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("admin/organisations/delete/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    // ── Users ──────────────────────────────────────────────────────────
+
+    /// List users (requires admin).
+    ///
+    /// `search` filters by email/name. `organisation` filters by org ID.
+    pub async fn users(
+        &self,
+        search: Option<&str>,
+        organisation: Option<i64>,
+    ) -> MispResult<Vec<MispUser>> {
+        let mut path = "admin/users/index".to_string();
+        let mut params = Vec::new();
+        if let Some(s) = search {
+            params.push(format!("searchall:{s}"));
+        }
+        if let Some(org) = organisation {
+            params.push(format!("searchorg:{org}"));
+        }
+        if !params.is_empty() {
+            path = format!("{}/{}", path, params.join("/"));
+        }
+        let json = self.get(&path).await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut users = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("User").is_some() {
+                &item["User"]
+            } else {
+                item
+            };
+            let u: MispUser = serde_json::from_value(val.clone())?;
+            users.push(u);
+        }
+        Ok(users)
+    }
+
+    /// Get a single user by ID. Pass `"me"` equivalent by using `get_user(0)` for the current user.
+    pub async fn get_user(&self, id: i64) -> MispResult<MispUser> {
+        let json = self.get(&format!("users/view/{id}")).await?;
+        let val = if json.get("User").is_some() {
+            &json["User"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Reset and return a new API auth key for a user.
+    pub async fn get_new_authkey(&self, user_id: i64) -> MispResult<String> {
+        let json = self
+            .post(
+                &format!("users/resetauthkey/{user_id}"),
+                &serde_json::json!({}),
+            )
+            .await?;
+        // Server returns {"message": "...", "authkey": "newkey"} or similar
+        if let Some(key) = json.get("authkey").and_then(|v| v.as_str()) {
+            Ok(key.to_string())
+        } else if let Some(msg) = json.get("message").and_then(|v| v.as_str()) {
+            // Some MISP versions embed the key in the message
+            Ok(msg.to_string())
+        } else {
+            Ok(json.to_string())
+        }
+    }
+
+    /// Create a new user (requires admin).
+    pub async fn add_user(&self, user: &MispUser) -> MispResult<MispUser> {
+        let body = serde_json::json!({"User": user});
+        let json = self.post("admin/users/add", &body).await?;
+        let val = if json.get("User").is_some() {
+            &json["User"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Update an existing user (requires admin).
+    pub async fn update_user(&self, user: &MispUser) -> MispResult<MispUser> {
+        let id = user
+            .id
+            .ok_or_else(|| MispError::MissingField("id".into()))?;
+        let body = serde_json::json!({"User": user});
+        let json = self.post(&format!("admin/users/edit/{id}"), &body).await?;
+        let val = if json.get("User").is_some() {
+            &json["User"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Delete a user by ID (requires admin).
+    pub async fn delete_user(&self, id: i64) -> MispResult<Value> {
+        self.post(&format!("admin/users/delete/{id}"), &serde_json::json!({}))
+            .await
+    }
+
+    /// Change the password of the currently authenticated user.
+    pub async fn change_user_password(&self, password: &str) -> MispResult<Value> {
+        self.post(
+            "users/change_pw",
+            &serde_json::json!({"password": password}),
+        )
+        .await
+    }
+
+    /// List pending user registrations.
+    pub async fn user_registrations(&self) -> MispResult<Vec<MispInbox>> {
+        let json = self.get("users/registrations/index").await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut regs = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("Inbox").is_some() {
+                &item["Inbox"]
+            } else {
+                item
+            };
+            let r: MispInbox = serde_json::from_value(val.clone())?;
+            regs.push(r);
+        }
+        Ok(regs)
+    }
+
+    /// Accept a user registration request.
+    pub async fn accept_user_registration(
+        &self,
+        id: i64,
+        org_id: Option<i64>,
+        role_id: Option<i64>,
+        perm_sync: Option<bool>,
+        perm_publish: Option<bool>,
+        perm_admin: Option<bool>,
+    ) -> MispResult<Value> {
+        let mut body = serde_json::Map::new();
+        if let Some(v) = org_id {
+            body.insert("org_id".into(), serde_json::json!(v));
+        }
+        if let Some(v) = role_id {
+            body.insert("role_id".into(), serde_json::json!(v));
+        }
+        if let Some(v) = perm_sync {
+            body.insert("perm_sync".into(), serde_json::json!(v));
+        }
+        if let Some(v) = perm_publish {
+            body.insert("perm_publish".into(), serde_json::json!(v));
+        }
+        if let Some(v) = perm_admin {
+            body.insert("perm_admin".into(), serde_json::json!(v));
+        }
+        self.post(
+            &format!("users/registrations/accept/{id}"),
+            &Value::Object(body),
+        )
+        .await
+    }
+
+    /// Discard (decline) a user registration request.
+    pub async fn discard_user_registration(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("users/registrations/decline/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Get a heartbeat from the user endpoint (checks if the user session is alive).
+    pub async fn users_heartbeat(&self) -> MispResult<Value> {
+        self.get("users/heartbeat").await
+    }
+
+    // ── Roles ──────────────────────────────────────────────────────────
+
+    /// List all roles.
+    pub async fn roles(&self) -> MispResult<Vec<MispRole>> {
+        let json = self.get("roles/index").await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut roles = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("Role").is_some() {
+                &item["Role"]
+            } else {
+                item
+            };
+            let r: MispRole = serde_json::from_value(val.clone())?;
+            roles.push(r);
+        }
+        Ok(roles)
+    }
+
+    /// Create a new role (requires admin).
+    pub async fn add_role(&self, role: &MispRole) -> MispResult<MispRole> {
+        let body = serde_json::json!({"Role": role});
+        let json = self.post("admin/roles/add", &body).await?;
+        let val = if json.get("Role").is_some() {
+            &json["Role"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Update an existing role (requires admin).
+    pub async fn update_role(&self, role: &MispRole) -> MispResult<MispRole> {
+        let id = role
+            .id
+            .ok_or_else(|| MispError::MissingField("id".into()))?;
+        let body = serde_json::json!({"Role": role});
+        let json = self.post(&format!("admin/roles/edit/{id}"), &body).await?;
+        let val = if json.get("Role").is_some() {
+            &json["Role"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Set a role as the default role for new users (requires admin).
+    pub async fn set_default_role(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("admin/roles/set_default/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Delete a role by ID (requires admin).
+    pub async fn delete_role(&self, id: i64) -> MispResult<Value> {
+        self.post(&format!("admin/roles/delete/{id}"), &serde_json::json!({}))
             .await
     }
 }
@@ -3827,5 +4161,416 @@ mod tests {
 
         let result = client.clean_correlation_exclusions().await.unwrap();
         assert_eq!(result["message"], "Exclusions cleaned.");
+    }
+
+    // ── Organisation tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn list_organisations_parses_wrapped() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/organisations/index"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"Organisation": {"id": "1", "name": "CIRCL", "local": "1"}},
+                {"Organisation": {"id": "2", "name": "CERT-EU", "local": "0"}}
+            ])))
+            .mount(&server)
+            .await;
+
+        let orgs = client.organisations(None, None).await.unwrap();
+        assert_eq!(orgs.len(), 2);
+        assert_eq!(orgs[0].name, "CIRCL");
+        assert!(orgs[0].local);
+        assert_eq!(orgs[1].name, "CERT-EU");
+        assert!(!orgs[1].local);
+    }
+
+    #[tokio::test]
+    async fn get_organisation_parses_wrapped() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/organisations/view/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Organisation": {
+                    "id": "1",
+                    "name": "CIRCL",
+                    "uuid": "550e8400-e29b-41d4-a716-446655440000",
+                    "local": "1",
+                    "nationality": "Luxembourg"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let org = client.get_organisation(1).await.unwrap();
+        assert_eq!(org.id, Some(1));
+        assert_eq!(org.name, "CIRCL");
+        assert_eq!(org.nationality, Some("Luxembourg".into()));
+    }
+
+    #[tokio::test]
+    async fn add_organisation_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/admin/organisations/add"))
+            .and(body_partial_json(
+                serde_json::json!({"Organisation": {"name": "New Org"}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Organisation": {
+                    "id": "10",
+                    "name": "New Org",
+                    "local": true
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let org = crate::MispOrganisation::new("New Org");
+        let result = client.add_organisation(&org).await.unwrap();
+        assert_eq!(result.id, Some(10));
+        assert_eq!(result.name, "New Org");
+    }
+
+    #[tokio::test]
+    async fn update_organisation_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/admin/organisations/edit/5"))
+            .and(body_partial_json(
+                serde_json::json!({"Organisation": {"name": "Updated Org"}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Organisation": {
+                    "id": "5",
+                    "name": "Updated Org",
+                    "local": true
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let mut org = crate::MispOrganisation::new("Updated Org");
+        org.id = Some(5);
+        let result = client.update_organisation(&org).await.unwrap();
+        assert_eq!(result.id, Some(5));
+        assert_eq!(result.name, "Updated Org");
+    }
+
+    #[tokio::test]
+    async fn delete_organisation_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/admin/organisations/delete/5"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Organisation deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_organisation(5).await.unwrap();
+        assert_eq!(result["message"], "Organisation deleted.");
+    }
+
+    // ── User tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn list_users_parses_wrapped() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/admin/users/index"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"User": {"id": "1", "email": "admin@misp.local", "org_id": "1", "disabled": "0", "termsaccepted": "1", "autoalert": "0", "contactalert": "0"}},
+                {"User": {"id": "2", "email": "analyst@misp.local", "org_id": "1", "disabled": "0", "termsaccepted": "1", "autoalert": "0", "contactalert": "0"}}
+            ])))
+            .mount(&server)
+            .await;
+
+        let users = client.users(None, None).await.unwrap();
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].email, "admin@misp.local");
+        assert_eq!(users[1].email, "analyst@misp.local");
+    }
+
+    #[tokio::test]
+    async fn get_user_parses_wrapped() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/users/view/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "User": {
+                    "id": "1",
+                    "email": "admin@misp.local",
+                    "org_id": "1",
+                    "role_id": "1",
+                    "termsaccepted": "1",
+                    "autoalert": "1",
+                    "contactalert": "0",
+                    "disabled": "0"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let user = client.get_user(1).await.unwrap();
+        assert_eq!(user.id, Some(1));
+        assert_eq!(user.email, "admin@misp.local");
+        assert!(user.termsaccepted);
+    }
+
+    #[tokio::test]
+    async fn add_user_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/admin/users/add"))
+            .and(body_partial_json(
+                serde_json::json!({"User": {"email": "new@misp.local"}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "User": {
+                    "id": "10",
+                    "email": "new@misp.local",
+                    "org_id": "1",
+                    "termsaccepted": false,
+                    "autoalert": false,
+                    "contactalert": false,
+                    "disabled": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let user = crate::MispUser::new("new@misp.local");
+        let result = client.add_user(&user).await.unwrap();
+        assert_eq!(result.id, Some(10));
+        assert_eq!(result.email, "new@misp.local");
+    }
+
+    #[tokio::test]
+    async fn delete_user_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/admin/users/delete/5"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "User deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_user(5).await.unwrap();
+        assert_eq!(result["message"], "User deleted.");
+    }
+
+    #[tokio::test]
+    async fn change_user_password_posts() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/users/change_pw"))
+            .and(body_partial_json(
+                serde_json::json!({"password": "newpass123"}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Password changed."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.change_user_password("newpass123").await.unwrap();
+        assert_eq!(result["message"], "Password changed.");
+    }
+
+    #[tokio::test]
+    async fn discard_user_registration_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/users/registrations/decline/3"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Registration discarded."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.discard_user_registration(3).await.unwrap();
+        assert_eq!(result["message"], "Registration discarded.");
+    }
+
+    // ── Role tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn list_roles_parses_wrapped() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/roles/index"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"Role": {"id": "1", "name": "admin", "perm_add": "1", "perm_modify": "1", "perm_publish": "1", "default_role": "0", "perm_modify_org": "0", "perm_publish_zmq": "0", "perm_publish_kafka": "0", "perm_delegate": "0", "perm_sync": "0", "perm_admin": "1", "perm_audit": "0", "perm_full": "0", "perm_auth": "1", "perm_site_admin": "1", "perm_regexp_access": "0", "perm_tagger": "1", "perm_template": "0", "perm_sharing_group": "0", "perm_tag_editor": "0", "perm_sighting": "0", "perm_object_template": "0", "restrict_org_admin": "0"}},
+                {"Role": {"id": "2", "name": "User", "perm_add": "1", "perm_modify": "0", "perm_publish": "0", "default_role": "1", "perm_modify_org": "0", "perm_publish_zmq": "0", "perm_publish_kafka": "0", "perm_delegate": "0", "perm_sync": "0", "perm_admin": "0", "perm_audit": "0", "perm_full": "0", "perm_auth": "0", "perm_site_admin": "0", "perm_regexp_access": "0", "perm_tagger": "0", "perm_template": "0", "perm_sharing_group": "0", "perm_tag_editor": "0", "perm_sighting": "0", "perm_object_template": "0", "restrict_org_admin": "0"}}
+            ])))
+            .mount(&server)
+            .await;
+
+        let roles = client.roles().await.unwrap();
+        assert_eq!(roles.len(), 2);
+        assert_eq!(roles[0].name, "admin");
+        assert!(roles[0].perm_add);
+        assert!(roles[0].perm_site_admin);
+        assert_eq!(roles[1].name, "User");
+        assert!(roles[1].default_role);
+        assert!(!roles[1].perm_admin);
+    }
+
+    #[tokio::test]
+    async fn add_role_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/admin/roles/add"))
+            .and(body_partial_json(
+                serde_json::json!({"Role": {"name": "Custom Role"}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Role": {
+                    "id": "5",
+                    "name": "Custom Role",
+                    "perm_add": true,
+                    "default_role": false,
+                    "perm_modify": false,
+                    "perm_modify_org": false,
+                    "perm_publish": false,
+                    "perm_publish_zmq": false,
+                    "perm_publish_kafka": false,
+                    "perm_delegate": false,
+                    "perm_sync": false,
+                    "perm_admin": false,
+                    "perm_audit": false,
+                    "perm_full": false,
+                    "perm_auth": false,
+                    "perm_site_admin": false,
+                    "perm_regexp_access": false,
+                    "perm_tagger": false,
+                    "perm_template": false,
+                    "perm_sharing_group": false,
+                    "perm_tag_editor": false,
+                    "perm_sighting": false,
+                    "perm_object_template": false,
+                    "restrict_org_admin": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let role = crate::MispRole::new("Custom Role");
+        let result = client.add_role(&role).await.unwrap();
+        assert_eq!(result.id, Some(5));
+        assert_eq!(result.name, "Custom Role");
+    }
+
+    #[tokio::test]
+    async fn delete_role_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/admin/roles/delete/5"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Role deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_role(5).await.unwrap();
+        assert_eq!(result["message"], "Role deleted.");
+    }
+
+    #[tokio::test]
+    async fn set_default_role_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/admin/roles/set_default/3"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Default role set."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.set_default_role(3).await.unwrap();
+        assert_eq!(result["message"], "Default role set.");
     }
 }
