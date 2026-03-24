@@ -397,7 +397,7 @@ PHASE 6: TOOLS & POLISH
 [~] Write examples:
 [x]   - basic_event.rs
 [x]   - search_attributes.rs
-[ ]   - manage_tags.rs
+[x]   - manage_tags.rs
 [ ]   - feed_operations.rs
 [ ]   - user_management.rs
 [ ]   - galaxy_operations.rs
