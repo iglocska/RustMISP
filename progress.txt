@@ -68,42 +68,42 @@ PHASE 1: FOUNDATION
 [x] Integration test stub: version check against live MISP
 
 --- Iteration 3: Event & Attribute & Tag Models + CRUD ---
-[ ] Implement MispTag struct (serde)
-[ ] Implement MispEvent struct (serde, with nested tags/attributes)
-[ ] Implement MispAttribute struct (serde, with nested tags/sightings)
-[ ] Implement events() - GET /events/index
-[ ] Implement get_event(id) - GET /events/view/{id}
-[ ] Implement event_exists(id) - HEAD /events/view/{id}
-[ ] Implement add_event(event) - POST /events/add
-[ ] Implement update_event(event) - POST /events/edit/{id}
-[ ] Implement delete_event(id) - POST /events/delete/{id}
-[ ] Implement publish(id, alert) - POST /events/publish/{id} or /events/alert/{id}
-[ ] Implement unpublish(id) - POST /events/unpublish/{id}
-[ ] Implement contact_event_reporter(id, msg) - POST /events/contact/{id}
-[ ] Implement enrich_event(id, modules) - POST /events/enrichEvent/{id}
-[ ] Implement attributes() - GET /attributes/index
-[ ] Implement get_attribute(id) - GET /attributes/view/{id}
-[ ] Implement attribute_exists(id) - HEAD /attributes/view/{id}
-[ ] Implement add_attribute(event_id, attr) - POST /attributes/add/{event_id}
-[ ] Implement update_attribute(attr) - POST /attributes/edit/{id}
-[ ] Implement delete_attribute(id, hard) - POST /attributes/delete/{id}
-[ ] Implement restore_attribute(id) - POST /attributes/restore/{id}
-[ ] Implement enrich_attribute(id, modules) - POST /attributes/enrichAttribute/{id}
-[ ] Implement tags() - GET /tags/index
-[ ] Implement get_tag(id) - GET /tags/view/{id}
-[ ] Implement add_tag(tag) - POST /tags/add
-[ ] Implement update_tag(tag) - POST /tags/edit/{id}
-[ ] Implement delete_tag(id) - POST /tags/delete/{id}
-[ ] Implement enable_tag(tag) - POST /tags/enable/{id}
-[ ] Implement disable_tag(tag) - POST /tags/disable/{id}
-[ ] Implement search_tags(name, strict) - GET /tags/search/{name}
-[ ] Implement tag(entity, tag, local) - POST /tags/attachTagToObject/{uuid}/{tag}
-[ ] Implement untag(entity, tag) - POST /tags/removeTagFromObject/{uuid}/{tag}
-[ ] Unit tests: MispEvent serde round-trip
-[ ] Unit tests: MispAttribute serde round-trip
-[ ] Unit tests: MispTag serde round-trip
-[ ] Unit tests: event CRUD with wiremock
-[ ] Unit tests: attribute CRUD with wiremock
+[x] Implement MispTag struct (serde)
+[x] Implement MispEvent struct (serde, with nested tags/attributes)
+[x] Implement MispAttribute struct (serde, with nested tags/sightings)
+[x] Implement events() - GET /events/index
+[x] Implement get_event(id) - GET /events/view/{id}
+[x] Implement event_exists(id) - HEAD /events/view/{id}
+[x] Implement add_event(event) - POST /events/add
+[x] Implement update_event(event) - POST /events/edit/{id}
+[x] Implement delete_event(id) - POST /events/delete/{id}
+[x] Implement publish(id, alert) - POST /events/publish/{id} or /events/alert/{id}
+[x] Implement unpublish(id) - POST /events/unpublish/{id}
+[x] Implement contact_event_reporter(id, msg) - POST /events/contact/{id}
+[x] Implement enrich_event(id, modules) - POST /events/enrichEvent/{id}
+[x] Implement attributes() - GET /attributes/index
+[x] Implement get_attribute(id) - GET /attributes/view/{id}
+[x] Implement attribute_exists(id) - HEAD /attributes/view/{id}
+[x] Implement add_attribute(event_id, attr) - POST /attributes/add/{event_id}
+[x] Implement update_attribute(attr) - POST /attributes/edit/{id}
+[x] Implement delete_attribute(id, hard) - POST /attributes/delete/{id}
+[x] Implement restore_attribute(id) - POST /attributes/restore/{id}
+[x] Implement enrich_attribute(id, modules) - POST /attributes/enrichAttribute/{id}
+[x] Implement tags() - GET /tags/index
+[x] Implement get_tag(id) - GET /tags/view/{id}
+[x] Implement add_tag(tag) - POST /tags/add
+[x] Implement update_tag(tag) - POST /tags/edit/{id}
+[x] Implement delete_tag(id) - POST /tags/delete/{id}
+[x] Implement enable_tag(tag) - POST /tags/enable/{id}
+[x] Implement disable_tag(tag) - POST /tags/disable/{id}
+[x] Implement search_tags(name, strict) - GET /tags/search/{name}
+[x] Implement tag(entity, tag, local) - POST /tags/attachTagToObject/{uuid}/{tag}
+[x] Implement untag(entity, tag) - POST /tags/removeTagFromObject/{uuid}/{tag}
+[x] Unit tests: MispEvent serde round-trip
+[x] Unit tests: MispAttribute serde round-trip
+[x] Unit tests: MispTag serde round-trip
+[x] Unit tests: event CRUD with wiremock
+[x] Unit tests: attribute CRUD with wiremock
 
 ================================================================================
 PHASE 2: OBJECT MODEL & PROPOSALS

@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Client, Method, Response, StatusCode};
 use serde_json::Value;
 use url::Url;
 
 use crate::error::{MispError, MispResult};
+use crate::models::attribute::MispAttribute;
+use crate::models::event::MispEvent;
+use crate::models::tag::MispTag;
 
 /// Async client for the MISP REST API.
 ///
@@ -279,6 +282,326 @@ impl MispClient {
     pub async fn db_schema_diagnostic(&self) -> MispResult<Value> {
         self.get("servers/schemaDiagnostics").await
     }
+
+    // ── Events ────────────────────────────────────────────────────────
+
+    /// List events (optionally filtered by the server-side index).
+    pub async fn events(&self) -> MispResult<Vec<MispEvent>> {
+        let json = self.get("events/index").await?;
+        // Response is an array of objects, each may or may not be wrapped in {"Event": ...}
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut events = Vec::with_capacity(arr.len());
+        for item in arr {
+            let event_val = if item.get("Event").is_some() {
+                &item["Event"]
+            } else {
+                item
+            };
+            let event: MispEvent = serde_json::from_value(event_val.clone())?;
+            events.push(event);
+        }
+        Ok(events)
+    }
+
+    /// Get a single event by ID.
+    pub async fn get_event(&self, id: i64) -> MispResult<MispEvent> {
+        let json = self.get(&format!("events/view/{id}")).await?;
+        let event_val = if json.get("Event").is_some() {
+            &json["Event"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(event_val.clone())?)
+    }
+
+    /// Check whether an event exists by ID (HEAD request).
+    pub async fn event_exists(&self, id: i64) -> MispResult<bool> {
+        self.head(&format!("events/view/{id}")).await
+    }
+
+    /// Create a new event.
+    pub async fn add_event(&self, event: &MispEvent) -> MispResult<MispEvent> {
+        let body = serde_json::json!({ "Event": serde_json::to_value(event)? });
+        let json = self.post("events/add", &body).await?;
+        let event_val = if json.get("Event").is_some() {
+            &json["Event"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(event_val.clone())?)
+    }
+
+    /// Update an existing event.
+    pub async fn update_event(&self, event: &MispEvent) -> MispResult<MispEvent> {
+        let id = event
+            .id
+            .ok_or_else(|| MispError::MissingField("id".into()))?;
+        let body = serde_json::json!({ "Event": serde_json::to_value(event)? });
+        let json = self.post(&format!("events/edit/{id}"), &body).await?;
+        let event_val = if json.get("Event").is_some() {
+            &json["Event"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(event_val.clone())?)
+    }
+
+    /// Delete an event by ID.
+    pub async fn delete_event(&self, id: i64) -> MispResult<Value> {
+        self.post(&format!("events/delete/{id}"), &serde_json::json!({}))
+            .await
+    }
+
+    /// Publish an event (with optional email alert).
+    pub async fn publish(&self, id: i64, alert: bool) -> MispResult<Value> {
+        let path = if alert {
+            format!("events/alert/{id}")
+        } else {
+            format!("events/publish/{id}")
+        };
+        self.post(&path, &serde_json::json!({})).await
+    }
+
+    /// Unpublish an event.
+    pub async fn unpublish(&self, id: i64) -> MispResult<Value> {
+        self.post(&format!("events/unpublish/{id}"), &serde_json::json!({}))
+            .await
+    }
+
+    /// Contact the reporter of an event.
+    pub async fn contact_event_reporter(&self, id: i64, message: &str) -> MispResult<Value> {
+        let body = serde_json::json!({ "message": message });
+        self.post(&format!("events/contact/{id}"), &body).await
+    }
+
+    /// Enrich an event using expansion modules.
+    pub async fn enrich_event(&self, id: i64, modules: Option<&[&str]>) -> MispResult<Value> {
+        let body = match modules {
+            Some(m) => serde_json::json!({ "modules": m }),
+            None => serde_json::json!({}),
+        };
+        self.post(&format!("events/enrichEvent/{id}"), &body).await
+    }
+
+    // ── Attributes ────────────────────────────────────────────────────
+
+    /// List attributes.
+    pub async fn attributes(&self) -> MispResult<Vec<MispAttribute>> {
+        let json = self.get("attributes/index").await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut attrs = Vec::with_capacity(arr.len());
+        for item in arr {
+            let attr_val = if item.get("Attribute").is_some() {
+                &item["Attribute"]
+            } else {
+                item
+            };
+            let attr: MispAttribute = serde_json::from_value(attr_val.clone())?;
+            attrs.push(attr);
+        }
+        Ok(attrs)
+    }
+
+    /// Get a single attribute by ID.
+    pub async fn get_attribute(&self, id: i64) -> MispResult<MispAttribute> {
+        let json = self.get(&format!("attributes/view/{id}")).await?;
+        let attr_val = if json.get("Attribute").is_some() {
+            &json["Attribute"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(attr_val.clone())?)
+    }
+
+    /// Check whether an attribute exists by ID.
+    pub async fn attribute_exists(&self, id: i64) -> MispResult<bool> {
+        self.head(&format!("attributes/view/{id}")).await
+    }
+
+    /// Add an attribute to an event.
+    pub async fn add_attribute(
+        &self,
+        event_id: i64,
+        attr: &MispAttribute,
+    ) -> MispResult<MispAttribute> {
+        let body = serde_json::to_value(attr)?;
+        let json = self
+            .post(&format!("attributes/add/{event_id}"), &body)
+            .await?;
+        let attr_val = if json.get("Attribute").is_some() {
+            &json["Attribute"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(attr_val.clone())?)
+    }
+
+    /// Update an existing attribute.
+    pub async fn update_attribute(&self, attr: &MispAttribute) -> MispResult<MispAttribute> {
+        let id = attr
+            .id
+            .ok_or_else(|| MispError::MissingField("id".into()))?;
+        let body = serde_json::to_value(attr)?;
+        let json = self.post(&format!("attributes/edit/{id}"), &body).await?;
+        let attr_val = if json.get("Attribute").is_some() {
+            &json["Attribute"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(attr_val.clone())?)
+    }
+
+    /// Delete an attribute by ID. If `hard` is true, permanently remove it.
+    pub async fn delete_attribute(&self, id: i64, hard: bool) -> MispResult<Value> {
+        let body = if hard {
+            serde_json::json!({ "hard_delete": 1 })
+        } else {
+            serde_json::json!({})
+        };
+        self.post(&format!("attributes/delete/{id}"), &body).await
+    }
+
+    /// Restore a soft-deleted attribute.
+    pub async fn restore_attribute(&self, id: i64) -> MispResult<Value> {
+        self.post(&format!("attributes/restore/{id}"), &serde_json::json!({}))
+            .await
+    }
+
+    /// Enrich an attribute using expansion modules.
+    pub async fn enrich_attribute(&self, id: i64, modules: Option<&[&str]>) -> MispResult<Value> {
+        let body = match modules {
+            Some(m) => serde_json::json!({ "modules": m }),
+            None => serde_json::json!({}),
+        };
+        self.post(&format!("attributes/enrichAttribute/{id}"), &body)
+            .await
+    }
+
+    // ── Tags ──────────────────────────────────────────────────────────
+
+    /// List all tags.
+    pub async fn tags(&self) -> MispResult<Vec<MispTag>> {
+        let json = self.get("tags/index").await?;
+        // Response may be {"Tag": [...]} or a bare array
+        let arr = if let Some(tag_arr) = json.get("Tag").and_then(|v| v.as_array()) {
+            tag_arr
+        } else {
+            json.as_array()
+                .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?
+        };
+        let mut tags = Vec::with_capacity(arr.len());
+        for item in arr {
+            let tag_val = if item.get("Tag").is_some() {
+                &item["Tag"]
+            } else {
+                item
+            };
+            let tag: MispTag = serde_json::from_value(tag_val.clone())?;
+            tags.push(tag);
+        }
+        Ok(tags)
+    }
+
+    /// Get a single tag by ID.
+    pub async fn get_tag(&self, id: i64) -> MispResult<MispTag> {
+        let json = self.get(&format!("tags/view/{id}")).await?;
+        let tag_val = if json.get("Tag").is_some() {
+            &json["Tag"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(tag_val.clone())?)
+    }
+
+    /// Create a new tag.
+    pub async fn add_tag(&self, tag: &MispTag) -> MispResult<MispTag> {
+        let body = serde_json::to_value(tag)?;
+        let json = self.post("tags/add", &body).await?;
+        let tag_val = if json.get("Tag").is_some() {
+            &json["Tag"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(tag_val.clone())?)
+    }
+
+    /// Update an existing tag.
+    pub async fn update_tag(&self, tag: &MispTag) -> MispResult<MispTag> {
+        let id = tag.id.ok_or_else(|| MispError::MissingField("id".into()))?;
+        let body = serde_json::to_value(tag)?;
+        let json = self.post(&format!("tags/edit/{id}"), &body).await?;
+        let tag_val = if json.get("Tag").is_some() {
+            &json["Tag"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(tag_val.clone())?)
+    }
+
+    /// Delete a tag by ID.
+    pub async fn delete_tag(&self, id: i64) -> MispResult<Value> {
+        self.post(&format!("tags/delete/{id}"), &serde_json::json!({}))
+            .await
+    }
+
+    /// Enable a tag.
+    pub async fn enable_tag(&self, id: i64) -> MispResult<Value> {
+        self.post(&format!("tags/enable/{id}"), &serde_json::json!({}))
+            .await
+    }
+
+    /// Disable a tag.
+    pub async fn disable_tag(&self, id: i64) -> MispResult<Value> {
+        self.post(&format!("tags/disable/{id}"), &serde_json::json!({}))
+            .await
+    }
+
+    /// Search tags by name.
+    pub async fn search_tags(&self, name: &str, strict: bool) -> MispResult<Vec<MispTag>> {
+        let path = if strict {
+            format!("tags/search/{name}/1")
+        } else {
+            format!("tags/search/{name}")
+        };
+        let json = self.get(&path).await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut tags = Vec::with_capacity(arr.len());
+        for item in arr {
+            let tag_val = if item.get("Tag").is_some() {
+                &item["Tag"]
+            } else {
+                item
+            };
+            let tag: MispTag = serde_json::from_value(tag_val.clone())?;
+            tags.push(tag);
+        }
+        Ok(tags)
+    }
+
+    /// Attach a tag to an entity (event, attribute, etc.) by UUID.
+    pub async fn tag(&self, uuid: &str, tag: &str, local: bool) -> MispResult<Value> {
+        let body = serde_json::json!({
+            "uuid": uuid,
+            "tag": tag,
+            "local": if local { 1 } else { 0 }
+        });
+        self.post("tags/attachTagToObject", &body).await
+    }
+
+    /// Remove a tag from an entity by UUID.
+    pub async fn untag(&self, uuid: &str, tag: &str) -> MispResult<Value> {
+        let body = serde_json::json!({
+            "uuid": uuid,
+            "tag": tag
+        });
+        self.post("tags/removeTagFromObject", &body).await
+    }
 }
 
 /// Ensure the URL has a trailing slash so `Url::join` works correctly.
@@ -505,5 +828,345 @@ mod tests {
 
         let result = client.misp_instance_version().await.unwrap();
         assert_eq!(result["version"], "2.4.180");
+    }
+
+    // ── Event CRUD tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_event_unwraps_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        let response = serde_json::json!({
+            "Event": {
+                "id": "42",
+                "info": "Test Event",
+                "published": false,
+                "date": "2024-01-15",
+                "threat_level_id": "2",
+                "analysis": "1",
+                "distribution": "0"
+            }
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/events/view/42"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let event = client.get_event(42).await.unwrap();
+        assert_eq!(event.id, Some(42));
+        assert_eq!(event.info, "Test Event");
+        assert!(!event.published);
+        assert_eq!(event.threat_level_id, Some(2));
+    }
+
+    #[tokio::test]
+    async fn add_event_sends_wrapped_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/events/add"))
+            .and(body_partial_json(serde_json::json!({
+                "Event": { "info": "New event" }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Event": {
+                    "id": "99",
+                    "info": "New event",
+                    "published": false,
+                    "uuid": "aaaa-bbbb-cccc"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let mut event = crate::MispEvent::new("New event");
+        let result = client.add_event(&event).await.unwrap();
+        assert_eq!(result.id, Some(99));
+        assert_eq!(result.info, "New event");
+
+        // update_event requires id
+        event.id = Some(99);
+    }
+
+    #[tokio::test]
+    async fn event_exists_returns_true() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("HEAD"))
+            .and(path("/events/view/1"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        assert!(client.event_exists(1).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn delete_event_sends_post() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/events/delete/42"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Event deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_event(42).await.unwrap();
+        assert_eq!(result["message"], "Event deleted.");
+    }
+
+    #[tokio::test]
+    async fn events_list_parses_array() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        let response = serde_json::json!([
+            {"id": "1", "info": "Event A", "published": true},
+            {"id": "2", "info": "Event B", "published": false}
+        ]);
+
+        Mock::given(method("GET"))
+            .and(path("/events/index"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let events = client.events().await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].info, "Event A");
+        assert_eq!(events[1].info, "Event B");
+    }
+
+    #[tokio::test]
+    async fn publish_event_with_alert() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/events/alert/5"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"saved": true, "success": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.publish(5, true).await.unwrap();
+        assert_eq!(result["saved"], true);
+    }
+
+    // ── Attribute CRUD tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_attribute_unwraps_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        let response = serde_json::json!({
+            "Attribute": {
+                "id": "7",
+                "event_id": "1",
+                "type": "ip-dst",
+                "category": "Network activity",
+                "value": "10.0.0.1",
+                "to_ids": true,
+                "comment": "",
+                "deleted": false,
+                "disable_correlation": false
+            }
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/attributes/view/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let attr = client.get_attribute(7).await.unwrap();
+        assert_eq!(attr.id, Some(7));
+        assert_eq!(attr.attr_type, "ip-dst");
+        assert_eq!(attr.value, "10.0.0.1");
+        assert!(attr.to_ids);
+    }
+
+    #[tokio::test]
+    async fn add_attribute_to_event() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/attributes/add/3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Attribute": {
+                    "id": "100",
+                    "event_id": "3",
+                    "type": "domain",
+                    "category": "Network activity",
+                    "value": "evil.com",
+                    "to_ids": false,
+                    "comment": "",
+                    "deleted": false,
+                    "disable_correlation": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let attr = crate::MispAttribute::new("domain", "Network activity", "evil.com");
+        let result = client.add_attribute(3, &attr).await.unwrap();
+        assert_eq!(result.id, Some(100));
+        assert_eq!(result.value, "evil.com");
+    }
+
+    #[tokio::test]
+    async fn delete_attribute_hard() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/attributes/delete/50"))
+            .and(body_partial_json(serde_json::json!({"hard_delete": 1})))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Attribute deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_attribute(50, true).await.unwrap();
+        assert_eq!(result["message"], "Attribute deleted.");
+    }
+
+    // ── Tag CRUD tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn tags_list() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/tags/index"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"Tag": {"id": "1", "name": "tlp:white", "exportable": true, "hide_tag": false}},
+                {"Tag": {"id": "2", "name": "tlp:green", "exportable": true, "hide_tag": false}}
+            ])))
+            .mount(&server)
+            .await;
+
+        let tags = client.tags().await.unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].name, "tlp:white");
+        assert_eq!(tags[1].name, "tlp:green");
+    }
+
+    #[tokio::test]
+    async fn add_tag_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/tags/add"))
+            .and(body_partial_json(serde_json::json!({"name": "my-tag"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Tag": {"id": "55", "name": "my-tag", "colour": "#ffffff", "exportable": true, "hide_tag": false}
+            })))
+            .mount(&server)
+            .await;
+
+        let tag = crate::MispTag::new("my-tag");
+        let result = client.add_tag(&tag).await.unwrap();
+        assert_eq!(result.id, Some(55));
+        assert_eq!(result.name, "my-tag");
+    }
+
+    #[tokio::test]
+    async fn tag_attach_to_entity() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/tags/attachTagToObject"))
+            .and(body_partial_json(serde_json::json!({
+                "uuid": "abc-123",
+                "tag": "tlp:green",
+                "local": 0
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"saved": true, "success": "Tag attached."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.tag("abc-123", "tlp:green", false).await.unwrap();
+        assert_eq!(result["saved"], true);
+    }
+
+    #[tokio::test]
+    async fn search_tags_by_name() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/tags/search/tlp"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"name": "tlp:white"},
+                {"name": "tlp:green"},
+                {"name": "tlp:amber"}
+            ])))
+            .mount(&server)
+            .await;
+
+        let tags = client.search_tags("tlp", false).await.unwrap();
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags[0].name, "tlp:white");
     }
 }
