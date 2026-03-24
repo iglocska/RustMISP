@@ -110,23 +110,23 @@ PHASE 2: OBJECT MODEL & PROPOSALS
 ================================================================================
 
 --- Iteration 4: Objects, References, Templates ---
-[ ] Implement MispObjectAttribute struct (extends MispAttribute + object_relation)
-[ ] Implement MispObjectReference struct (serde)
-[ ] Implement MispObject struct (with nested attributes, references)
-[ ] Implement MispObjectTemplate struct (serde)
-[ ] Implement get_object(id) - GET /objects/view/{id}
-[ ] Implement object_exists(id) - HEAD /objects/view/{id}
-[ ] Implement add_object(event_id, object) - POST /objects/add/{event_id}
-[ ] Implement update_object(object) - POST /objects/edit/{id}
-[ ] Implement delete_object(id, hard) - POST /objects/delete/{id}/{hard}
-[ ] Implement add_object_reference(ref) - POST /objectReferences/add
-[ ] Implement delete_object_reference(id) - POST /objectReferences/delete/{id}
-[ ] Implement object_templates() - GET /objectTemplates/index
-[ ] Implement get_object_template(id) - GET /objectTemplates/view/{id}
-[ ] Implement get_raw_object_template(uuid_or_name) - GET /objectTemplates/getRaw/{uuid}
-[ ] Implement update_object_templates() - POST /objectTemplates/update
-[ ] Unit tests: MispObject serde round-trip
-[ ] Unit tests: object CRUD with wiremock
+[x] Implement MispObjectAttribute struct (extends MispAttribute + object_relation)
+[x] Implement MispObjectReference struct (serde)
+[x] Implement MispObject struct (with nested attributes, references)
+[x] Implement MispObjectTemplate struct (serde)
+[x] Implement get_object(id) - GET /objects/view/{id}
+[x] Implement object_exists(id) - HEAD /objects/view/{id}
+[x] Implement add_object(event_id, object) - POST /objects/add/{event_id}
+[x] Implement update_object(object) - POST /objects/edit/{id}
+[x] Implement delete_object(id, hard) - POST /objects/delete/{id}/{hard}
+[x] Implement add_object_reference(ref) - POST /objectReferences/add
+[x] Implement delete_object_reference(id) - POST /objectReferences/delete/{id}
+[x] Implement object_templates() - GET /objectTemplates/index
+[x] Implement get_object_template(id) - GET /objectTemplates/view/{id}
+[x] Implement get_raw_object_template(uuid_or_name) - GET /objectTemplates/getRaw/{uuid}
+[x] Implement update_object_templates() - POST /objectTemplates/update
+[x] Unit tests: MispObject serde round-trip
+[x] Unit tests: object CRUD with wiremock
 
 --- Iteration 5: Proposals, Sightings, Event Reports ---
 [ ] Implement MispShadowAttribute struct (serde)

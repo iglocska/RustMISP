@@ -9,6 +9,7 @@ use url::Url;
 use crate::error::{MispError, MispResult};
 use crate::models::attribute::MispAttribute;
 use crate::models::event::MispEvent;
+use crate::models::object::{MispObject, MispObjectReference, MispObjectTemplate};
 use crate::models::tag::MispTag;
 
 /// Async client for the MISP REST API.
@@ -602,6 +603,131 @@ impl MispClient {
         });
         self.post("tags/removeTagFromObject", &body).await
     }
+
+    // ── Objects ──────────────────────────────────────────────────────
+
+    /// Get a single object by ID.
+    pub async fn get_object(&self, id: i64) -> MispResult<MispObject> {
+        let json = self.get(&format!("objects/view/{id}")).await?;
+        let obj_val = if json.get("Object").is_some() {
+            &json["Object"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(obj_val.clone())?)
+    }
+
+    /// Check whether an object exists by ID.
+    pub async fn object_exists(&self, id: i64) -> MispResult<bool> {
+        self.head(&format!("objects/view/{id}")).await
+    }
+
+    /// Add an object to an event.
+    pub async fn add_object(&self, event_id: i64, object: &MispObject) -> MispResult<MispObject> {
+        let body = serde_json::json!({ "Object": serde_json::to_value(object)? });
+        let json = self.post(&format!("objects/add/{event_id}"), &body).await?;
+        let obj_val = if json.get("Object").is_some() {
+            &json["Object"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(obj_val.clone())?)
+    }
+
+    /// Update an existing object.
+    pub async fn update_object(&self, object: &MispObject) -> MispResult<MispObject> {
+        let id = object
+            .id
+            .ok_or_else(|| MispError::MissingField("id".into()))?;
+        let body = serde_json::json!({ "Object": serde_json::to_value(object)? });
+        let json = self.post(&format!("objects/edit/{id}"), &body).await?;
+        let obj_val = if json.get("Object").is_some() {
+            &json["Object"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(obj_val.clone())?)
+    }
+
+    /// Delete an object by ID. If `hard` is true, permanently remove it.
+    pub async fn delete_object(&self, id: i64, hard: bool) -> MispResult<Value> {
+        let path = if hard {
+            format!("objects/delete/{id}/1")
+        } else {
+            format!("objects/delete/{id}")
+        };
+        self.post(&path, &serde_json::json!({})).await
+    }
+
+    // ── Object References ────────────────────────────────────────────
+
+    /// Add an object reference.
+    pub async fn add_object_reference(
+        &self,
+        reference: &MispObjectReference,
+    ) -> MispResult<MispObjectReference> {
+        let body = serde_json::json!({ "ObjectReference": serde_json::to_value(reference)? });
+        let json = self.post("objectReferences/add", &body).await?;
+        let ref_val = if json.get("ObjectReference").is_some() {
+            &json["ObjectReference"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(ref_val.clone())?)
+    }
+
+    /// Delete an object reference by ID.
+    pub async fn delete_object_reference(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("objectReferences/delete/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    // ── Object Templates ─────────────────────────────────────────────
+
+    /// List all object templates.
+    pub async fn object_templates(&self) -> MispResult<Vec<MispObjectTemplate>> {
+        let json = self.get("objectTemplates/index").await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut templates = Vec::with_capacity(arr.len());
+        for item in arr {
+            let tmpl_val = if item.get("ObjectTemplate").is_some() {
+                &item["ObjectTemplate"]
+            } else {
+                item
+            };
+            let tmpl: MispObjectTemplate = serde_json::from_value(tmpl_val.clone())?;
+            templates.push(tmpl);
+        }
+        Ok(templates)
+    }
+
+    /// Get a single object template by ID.
+    pub async fn get_object_template(&self, id: i64) -> MispResult<MispObjectTemplate> {
+        let json = self.get(&format!("objectTemplates/view/{id}")).await?;
+        let tmpl_val = if json.get("ObjectTemplate").is_some() {
+            &json["ObjectTemplate"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(tmpl_val.clone())?)
+    }
+
+    /// Get a raw object template by UUID or name.
+    pub async fn get_raw_object_template(&self, uuid_or_name: &str) -> MispResult<Value> {
+        self.get(&format!("objectTemplates/getRaw/{uuid_or_name}"))
+            .await
+    }
+
+    /// Trigger an update of all object templates.
+    pub async fn update_object_templates(&self) -> MispResult<Value> {
+        self.post("objectTemplates/update", &serde_json::json!({}))
+            .await
+    }
 }
 
 /// Ensure the URL has a trailing slash so `Url::join` works correctly.
@@ -1168,5 +1294,245 @@ mod tests {
         let tags = client.search_tags("tlp", false).await.unwrap();
         assert_eq!(tags.len(), 3);
         assert_eq!(tags[0].name, "tlp:white");
+    }
+
+    // ── Object CRUD tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_object_unwraps_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        let response = serde_json::json!({
+            "Object": {
+                "id": "10",
+                "name": "file",
+                "meta-category": "file",
+                "template_uuid": "tmpl-uuid",
+                "template_version": "23",
+                "distribution": "1",
+                "deleted": false
+            }
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/objects/view/10"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let obj = client.get_object(10).await.unwrap();
+        assert_eq!(obj.id, Some(10));
+        assert_eq!(obj.name, "file");
+        assert_eq!(obj.template_version, Some(23));
+    }
+
+    #[tokio::test]
+    async fn object_exists_returns_true() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("HEAD"))
+            .and(path("/objects/view/10"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        assert!(client.object_exists(10).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn add_object_to_event() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/objects/add/5"))
+            .and(body_partial_json(serde_json::json!({
+                "Object": { "name": "file" }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Object": {
+                    "id": "20",
+                    "name": "file",
+                    "event_id": "5",
+                    "deleted": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let obj = crate::MispObject::new("file");
+        let result = client.add_object(5, &obj).await.unwrap();
+        assert_eq!(result.id, Some(20));
+        assert_eq!(result.name, "file");
+        assert_eq!(result.event_id, Some(5));
+    }
+
+    #[tokio::test]
+    async fn update_object_requires_id() {
+        let client = MispClient::new("https://misp.example.com", "key", false).unwrap();
+        let obj = crate::MispObject::new("file");
+        let result = client.update_object(&obj).await;
+        assert!(matches!(result, Err(MispError::MissingField(_))));
+    }
+
+    #[tokio::test]
+    async fn delete_object_soft() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/objects/delete/10"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Object deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_object(10, false).await.unwrap();
+        assert_eq!(result["message"], "Object deleted.");
+    }
+
+    #[tokio::test]
+    async fn delete_object_hard() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/objects/delete/10/1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Object permanently deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_object(10, true).await.unwrap();
+        assert_eq!(result["message"], "Object permanently deleted.");
+    }
+
+    #[tokio::test]
+    async fn add_object_reference_sends_wrapped() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/objectReferences/add"))
+            .and(body_partial_json(serde_json::json!({
+                "ObjectReference": {
+                    "referenced_uuid": "target-uuid",
+                    "relationship_type": "related-to"
+                }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ObjectReference": {
+                    "id": "30",
+                    "referenced_uuid": "target-uuid",
+                    "relationship_type": "related-to",
+                    "deleted": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let r = crate::MispObjectReference::new("target-uuid", "related-to");
+        let result = client.add_object_reference(&r).await.unwrap();
+        assert_eq!(result.id, Some(30));
+        assert_eq!(result.referenced_uuid.as_deref(), Some("target-uuid"));
+    }
+
+    #[tokio::test]
+    async fn delete_object_reference_sends_post() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/objectReferences/delete/30"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "ObjectReference deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_object_reference(30).await.unwrap();
+        assert_eq!(result["message"], "ObjectReference deleted.");
+    }
+
+    #[tokio::test]
+    async fn object_templates_list() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/objectTemplates/index"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"ObjectTemplate": {"id": "1", "name": "file", "version": "23", "active": true, "fixed": false}},
+                {"ObjectTemplate": {"id": "2", "name": "domain-ip", "version": "10", "active": true, "fixed": false}}
+            ])))
+            .mount(&server)
+            .await;
+
+        let templates = client.object_templates().await.unwrap();
+        assert_eq!(templates.len(), 2);
+        assert_eq!(templates[0].name, "file");
+        assert_eq!(templates[1].name, "domain-ip");
+    }
+
+    #[tokio::test]
+    async fn get_object_template_by_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/objectTemplates/view/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ObjectTemplate": {
+                    "id": "1",
+                    "uuid": "tmpl-uuid-1",
+                    "name": "file",
+                    "version": "23",
+                    "description": "File object",
+                    "meta-category": "file",
+                    "active": true,
+                    "fixed": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let tmpl = client.get_object_template(1).await.unwrap();
+        assert_eq!(tmpl.id, Some(1));
+        assert_eq!(tmpl.name, "file");
+        assert_eq!(tmpl.version, Some(23));
     }
 }
