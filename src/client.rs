@@ -1841,6 +1841,113 @@ fn normalize_url(url: &str) -> MispResult<Url> {
     Url::parse(&s).map_err(Into::into)
 }
 
+/// Register a new user on a MISP instance (unauthenticated).
+///
+/// This is a standalone function that does not require an API key.
+/// It sends a registration request to the MISP instance's `/users/register` endpoint.
+///
+/// # Arguments
+/// * `misp_url` - Base URL of the MISP instance (e.g. `https://misp.example.com`)
+/// * `email` - Email address for the new account
+/// * `organisation` - Optional organisation (UUID or name)
+/// * `org_id` - Optional numeric organisation ID
+/// * `org_name` - Optional organisation name
+/// * `message` - Optional registration message
+/// * `custom_perms` - Optional custom permissions string
+/// * `perm_sync` - Whether to request sync permission
+/// * `perm_publish` - Whether to request publish permission
+/// * `perm_admin` - Whether to request admin permission
+/// * `verify_ssl` - Whether to verify TLS certificates
+#[allow(clippy::too_many_arguments)]
+pub async fn register_user(
+    misp_url: impl Into<String>,
+    email: impl Into<String>,
+    organisation: Option<&str>,
+    org_id: Option<i64>,
+    org_name: Option<&str>,
+    message: Option<&str>,
+    custom_perms: Option<&str>,
+    perm_sync: bool,
+    perm_publish: bool,
+    perm_admin: bool,
+    verify_ssl: bool,
+) -> MispResult<Value> {
+    let base_url = normalize_url(&misp_url.into())?;
+    let url = base_url.join("users/register")?;
+
+    let mut body = serde_json::Map::new();
+    body.insert("email".into(), serde_json::json!(email.into()));
+
+    if let Some(org) = organisation {
+        body.insert("org_uuid".into(), serde_json::json!(org));
+    }
+    if let Some(id) = org_id {
+        body.insert("org_id".into(), serde_json::json!(id));
+    }
+    if let Some(name) = org_name {
+        body.insert("org_name".into(), serde_json::json!(name));
+    }
+    if let Some(msg) = message {
+        body.insert("message".into(), serde_json::json!(msg));
+    }
+    if let Some(perms) = custom_perms {
+        body.insert("custom_perms".into(), serde_json::json!(perms));
+    }
+    if perm_sync {
+        body.insert("perm_sync".into(), serde_json::json!(true));
+    }
+    if perm_publish {
+        body.insert("perm_publish".into(), serde_json::json!(true));
+    }
+    if perm_admin {
+        body.insert("perm_admin".into(), serde_json::json!(true));
+    }
+
+    let client = Client::builder()
+        .danger_accept_invalid_certs(!verify_ssl)
+        .default_headers({
+            let mut headers = HeaderMap::new();
+            headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            headers
+        })
+        .build()?;
+
+    let response = client
+        .post(url)
+        .json(&Value::Object(body))
+        .send()
+        .await?;
+
+    let status = response.status();
+    let text = response.text().await?;
+
+    if status == StatusCode::FORBIDDEN {
+        return Err(MispError::AuthError(text));
+    }
+    if status == StatusCode::NOT_FOUND {
+        return Err(MispError::NotFound(text));
+    }
+
+    let json: Value = serde_json::from_str(&text).map_err(|_| {
+        MispError::UnexpectedResponse(format!("Non-JSON response ({}): {}", status, text))
+    })?;
+
+    if status.is_success() {
+        Ok(json)
+    } else {
+        let message = json["message"]
+            .as_str()
+            .or_else(|| json["errors"].as_str())
+            .unwrap_or("Unknown error")
+            .to_string();
+        Err(MispError::ApiError {
+            status: status.as_u16(),
+            message,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4572,5 +4679,118 @@ mod tests {
 
         let result = client.set_default_role(3).await.unwrap();
         assert_eq!(result["message"], "Default role set.");
+    }
+
+    // ── register_user standalone function tests ─────────────────────
+
+    #[tokio::test]
+    async fn register_user_sends_correct_request() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/users/register"))
+            .and(body_json(serde_json::json!({
+                "email": "newuser@example.com",
+                "org_name": "Test Org",
+                "message": "Please add me",
+                "perm_sync": true
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Registration successful."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = super::register_user(
+            server.uri(),
+            "newuser@example.com",
+            None,
+            None,
+            Some("Test Org"),
+            Some("Please add me"),
+            None,
+            true,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["message"], "Registration successful.");
+    }
+
+    #[tokio::test]
+    async fn register_user_minimal_request() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/users/register"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "OK"})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = super::register_user(
+            server.uri(),
+            "user@test.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["message"], "OK");
+    }
+
+    #[tokio::test]
+    async fn register_user_handles_error_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/users/register"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(serde_json::json!({"message": "Registration disabled."})),
+            )
+            .mount(&server)
+            .await;
+
+        let err = super::register_user(
+            server.uri(),
+            "user@test.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, MispError::ApiError { status: 400, .. }));
     }
 }

@@ -2,7 +2,7 @@ pub mod client;
 pub mod error;
 pub mod models;
 
-pub use client::{MispClient, MispClientBuilder};
+pub use client::{MispClient, MispClientBuilder, register_user};
 pub use error::{MispError, MispResult};
 pub use models::attribute::MispAttribute;
 pub use models::correlation::{MispCorrelationExclusion, MispDecayingModel};

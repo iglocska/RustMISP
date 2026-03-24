@@ -244,7 +244,7 @@ PHASE 4: ADMINISTRATION
 [x] Implement update_role(role) - POST /admin/roles/edit/{id}
 [x] Implement set_default_role(id) - POST /admin/roles/set_default/{id}
 [x] Implement delete_role(id) - POST /admin/roles/delete/{id}
-[ ] Implement register_user() standalone function
+[x] Implement register_user() standalone function
 [x] Unit tests: user/org/role serde round-trips
 
 --- Iteration 9: Servers, Feeds, Sharing Groups, User Settings ---
