@@ -2,6 +2,8 @@ pub mod client;
 pub mod error;
 pub mod models;
 pub mod search;
+pub mod tools;
+pub mod validation;
 
 pub use client::{MispClient, MispClientBuilder, register_user};
 pub use error::{MispError, MispResult};

@@ -356,15 +356,15 @@ PHASE 6: TOOLS & POLISH
 ================================================================================
 
 --- Iteration 12: Tools ---
-[ ] Implement AbstractMispObjectGenerator trait
-[ ] Implement GenericObjectGenerator
-[ ] Implement FileObject (feature: tools-file) - hash generation (MD5, SHA1, SHA256, SHA512)
-[ ] Implement CsvLoader (feature: tools-csv) - CSV to MISP attributes
-[ ] Implement load_openioc / load_openioc_file (feature: tools-openioc)
-[ ] Implement FeedGenerator (feature: tools-feed) - MISP feed metadata
-[ ] Implement attribute type/category validation from describeTypes.json
-[ ] Unit tests: GenericObjectGenerator
-[ ] Unit tests: validation against describeTypes.json
+[x] Implement AbstractMispObjectGenerator trait
+[x] Implement GenericObjectGenerator
+[x] Implement FileObject (feature: tools-file) - hash generation (MD5, SHA1, SHA256, SHA512)
+[x] Implement CsvLoader (feature: tools-csv) - CSV to MISP attributes
+[x] Implement load_openioc / load_openioc_file (feature: tools-openioc)
+[x] Implement FeedGenerator (feature: tools-feed) - MISP feed metadata
+[x] Implement attribute type/category validation from describeTypes.json
+[x] Unit tests: GenericObjectGenerator
+[x] Unit tests: validation against describeTypes.json
 
 --- Iteration 13: Blocking Client & Python Tests ---
 [ ] Implement MispClientBlocking wrapper (wraps async with tokio::runtime::Runtime)
