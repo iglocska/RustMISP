@@ -394,7 +394,7 @@ PHASE 6: TOOLS & POLISH
 [x]   - User/Org management
 [x]   - Sharing group workflow
 [x]   - Feed operations
-[~] Write examples:
+[x] Write examples:
 [x]   - basic_event.rs
 [x]   - search_attributes.rs
 [x]   - manage_tags.rs
@@ -402,7 +402,7 @@ PHASE 6: TOOLS & POLISH
 [x]   - user_management.rs
 [x]   - galaxy_operations.rs
 [x]   - sightings.rs
-[ ]   - sharing_groups.rs
+[x]   - sharing_groups.rs
 [ ] Complete rustdoc documentation for all public types and methods
 [ ] Write README.md with quickstart guide
 [ ] Verify: cargo doc --no-deps builds cleanly
