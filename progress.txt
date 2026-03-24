@@ -404,7 +404,7 @@ PHASE 6: TOOLS & POLISH
 [x]   - sightings.rs
 [x]   - sharing_groups.rs
 [x] Complete rustdoc documentation for all public types and methods
-[ ] Write README.md with quickstart guide
+[x] Write README.md with quickstart guide
 [x] Verify: cargo doc --no-deps builds cleanly
 [x] Verify: cargo clippy -- -D warnings passes
 [x] Verify: cargo test passes (unit tests)
