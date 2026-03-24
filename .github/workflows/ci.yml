@@ -1,0 +1,337 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Unit tests and compilation checks (no MISP instance needed)
+  unit-tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Run unit tests
+        run: cargo test
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Clippy lints
+        run: cargo clippy --all-targets -- -D warnings || true
+
+  # Integration tests against a live MISP instance
+  # Mirrors the MISP project's own CI setup from .github/workflows/main.yml
+  integration-tests:
+    runs-on: ubuntu-22.04
+
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: bar
+          MARIADB_DATABASE: misp
+          MARIADB_USER: misp
+          MARIADB_PASSWORD: blah
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -h 127.0.0.1 -uroot -pbar"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
+
+      redis:
+        image: redis:5
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-integ-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-integ-
+
+      - name: Build integration tests
+        run: cargo build --test integration_tests
+
+      # ── Clone and install MISP (mirrors MISP's own CI) ──────────────
+
+      - name: Clone MISP
+        uses: actions/checkout@v4
+        with:
+          repository: MISP/MISP
+          ref: '2.5'
+          submodules: recursive
+          path: misp
+
+      - name: Stop default MySQL (if present)
+        run: sudo service mysql stop || true
+
+      - name: Wait for MariaDB
+        run: |
+          for i in {1..60}; do
+            mysqladmin ping -h 127.0.0.1 -uroot -pbar 2>/dev/null && exit 0
+            sleep 2
+          done
+          echo "MariaDB did not become ready"; exit 1
+
+      - name: Install redis-cli
+        run: sudo apt-get -y update && sudo apt-get -y install redis-tools
+
+      - name: Wait for Redis
+        run: |
+          for i in {1..60}; do
+            redis-cli -h 127.0.0.1 -p 6379 ping | grep -q PONG && exit 0
+            sleep 2
+          done
+          echo "Redis did not become ready"; exit 1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mysql, mbstring, xml, opcache, readline, redis, gd, apcu
+
+      - name: Initialize variables
+        run: |
+          echo "USER=$(id -u -n)" >> $GITHUB_ENV
+          echo "HOST=localhost" >> $GITHUB_ENV
+          echo "MISP_DIR=$GITHUB_WORKSPACE/misp" >> $GITHUB_ENV
+
+      - name: Install system deps
+        run: |
+          sudo apt-get -y install curl python3 python3-pip python3-virtualenv \
+            apache2 libapache2-mod-php8.3
+
+      - name: Install MISP PHP deps
+        run: |
+          sudo chown $USER:www-data $HOME/.composer
+          pushd $MISP_DIR/app
+          composer config --no-plugins allow-plugins.composer/installers true
+          composer install --no-progress
+          popd
+
+      - name: Setup file permissions
+        run: |
+          sudo chown -R $USER:www-data $MISP_DIR
+          sudo chmod -R 775 $MISP_DIR
+          sudo chmod -R g+ws $MISP_DIR/app/tmp
+          sudo chmod -R g+ws $MISP_DIR/app/tmp/cache
+          sudo chmod -R g+ws $MISP_DIR/app/tmp/cache/persistent
+          sudo chmod -R g+ws $MISP_DIR/app/tmp/cache/models
+          sudo chmod -R g+ws $MISP_DIR/app/tmp/logs
+          sudo chmod -R g+ws $MISP_DIR/app/files
+          sudo chmod -R g+ws $MISP_DIR/app/files/scripts/tmp
+
+      - name: Initialize database
+        run: |
+          mysql -h 127.0.0.1 --port 3306 -u root -pbar -e "SET GLOBAL sql_mode = 'STRICT_ALL_TABLES';"
+          mysql -h 127.0.0.1 --port 3306 -u root -pbar -e "grant usage on *.* to misp@'%' identified by 'blah';"
+          mysql -h 127.0.0.1 --port 3306 -u root -pbar -e "grant all privileges on misp.* to misp@'%';"
+          mysql -h 127.0.0.1 --port 3306 -u misp -pblah misp < $MISP_DIR/INSTALL/MYSQL.sql
+
+      - name: Configure Apache
+        run: |
+          sudo mkdir -p /etc/apache2/sites-available
+          sudo cp -f $MISP_DIR/build/github-action-ci-apache /etc/apache2/sites-available/misp.conf
+          sudo sed -e "s?%GITHUB_WORKSPACE%?${MISP_DIR}?g" --in-place /etc/apache2/sites-available/misp.conf
+          sudo sed -e "s?%HOST%?${HOST}?g" --in-place /etc/apache2/sites-available/misp.conf
+          sudo a2dissite 000-default
+          sudo a2ensite misp.conf
+          sudo a2enmod rewrite
+          sudo systemctl start --no-block apache2
+
+      - name: Configure MISP files
+        run: |
+          sudo cp $MISP_DIR/app/Config/bootstrap.default.php $MISP_DIR/app/Config/bootstrap.php
+          sudo cp $MISP_DIR/build/database.php $MISP_DIR/app/Config/database.php
+          sudo cp $MISP_DIR/app/Config/core.default.php $MISP_DIR/app/Config/core.php
+          sudo cp $MISP_DIR/app/Config/config.default.php $MISP_DIR/app/Config/config.php
+          sudo cp $MISP_DIR/build/email.php $MISP_DIR/app/Config/email.php
+          sudo chown -R $USER:www-data $MISP_DIR/app/Config
+          sudo chmod -R 777 $MISP_DIR/app/Config
+
+      - name: Setup GPG
+        run: |
+          sudo mkdir $MISP_DIR/.gnupg
+          sudo cp -a /dev/urandom /dev/random
+          sudo gpg --no-tty --no-permission-warning --pinentry-mode=loopback \
+            --passphrase "travistest" --homedir $MISP_DIR/.gnupg \
+            --gen-key --batch $MISP_DIR/build/gpg
+          sudo chown -R www-data:www-data $MISP_DIR/.gnupg
+          sudo chmod -R 700 $MISP_DIR/.gnupg
+          sudo usermod -a -G www-data $USER
+          sudo chown -R $USER:www-data $MISP_DIR/app/Config
+          sudo chmod -R 777 $MISP_DIR/app/Config
+
+      - name: Setup Python virtualenv
+        run: |
+          python3 -m virtualenv -p python3 $MISP_DIR/venv
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.python_bin" "$MISP_DIR/venv/bin/python"
+          . $MISP_DIR/venv/bin/activate
+          pip install -r $MISP_DIR/requirements.txt
+          deactivate
+
+      - name: Run DB updates
+        run: |
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.osuser" $USER
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.server_settings_skip_backup_rotate" 1
+          $MISP_DIR/app/Console/cake Admin runUpdates
+          $MISP_DIR/app/Console/cake Admin schemaDiagnostics
+
+      - name: Configure MISP settings
+        run: |
+          $MISP_DIR/app/Console/cake User init | tee /tmp/key.txt
+          echo "AUTH=$(cat /tmp/key.txt)" >> $GITHUB_ENV
+          $MISP_DIR/app/Console/cake Admin setSetting "Session.autoRegenerate" 0
+          $MISP_DIR/app/Console/cake Admin setSetting "Session.timeout" 600
+          $MISP_DIR/app/Console/cake Admin setSetting "Session.cookieTimeout" 3600
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.host_org_id" 1
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.email" "info@admin.test"
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.disable_emailing" false
+          $MISP_DIR/app/Console/cake Admin setSetting --force "debug" true
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.redis_host" "127.0.0.1"
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.redis_port" 6379
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.redis_database" 13
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.redis_password" ""
+          $MISP_DIR/app/Console/cake Admin setSetting "GnuPG.email" "info@admin.test"
+          $MISP_DIR/app/Console/cake Admin setSetting "GnuPG.homedir" "$MISP_DIR/.gnupg"
+          $MISP_DIR/app/Console/cake Admin setSetting "GnuPG.password" "travistest"
+          $MISP_DIR/app/Console/cake Admin setSetting "MISP.download_gpg_from_homedir" 1
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.enabled" 1
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.redis_host" "127.0.0.1"
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.redis_port" 6379
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.redis_password" ""
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.redis_database" 1
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.redis_namespace" "background_jobs"
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.supervisor_host" "127.0.0.1"
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.supervisor_port" 9001
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.supervisor_user" "supervisor"
+          $MISP_DIR/app/Console/cake Admin setSetting "SimpleBackgroundJobs.supervisor_password" "supervisor"
+
+      - name: Verify Redis is ready
+        run: $MISP_DIR/app/Console/cake Admin redisReady
+
+      - name: Start background workers
+        run: |
+          sudo pip install supervisor
+          sudo cp $MISP_DIR/build/supervisor/supervisord.conf /etc/supervisord.conf
+          sudo mkdir -p /etc/supervisor/conf.d
+          # Generate workers config with correct MISP path
+          cat > /tmp/50-workers.conf << 'WEOF'
+          [group:misp-workers]
+          programs=default,email,cache,prio,update,scheduler
+          WEOF
+          for queue in default email cache prio update; do
+            cat >> /tmp/50-workers.conf << EOF
+
+          [program:$queue]
+          directory=$MISP_DIR
+          command=$MISP_DIR/app/Console/cake start_worker $queue
+          process_name=%(program_name)s_%(process_num)02d
+          numprocs=1
+          autostart=false
+          autorestart=true
+          redirect_stderr=false
+          stderr_logfile=/tmp/misp-workers-errors.log
+          stdout_logfile=/tmp/misp-workers.log
+          user=www-data
+          EOF
+          done
+          cat >> /tmp/50-workers.conf << EOF
+
+          [program:scheduler]
+          directory=$MISP_DIR
+          command=$MISP_DIR/app/Console/cake scheduler_worker
+          process_name=%(program_name)s_%(process_num)02d
+          numprocs=1
+          autostart=false
+          autorestart=true
+          redirect_stderr=false
+          stderr_logfile=/tmp/misp-workers-errors.log
+          stdout_logfile=/tmp/misp-workers.log
+          user=www-data
+          EOF
+          sudo cp /tmp/50-workers.conf /etc/supervisor/conf.d/50-workers.conf
+          sudo python3 -m supervisor.supervisord -c /etc/supervisord.conf
+          sudo python3 -m supervisor.supervisorctl -c /etc/supervisord.conf start all
+          sudo python3 -m supervisor.supervisorctl -c /etc/supervisord.conf status
+
+      - name: Update MISP JSON data
+        run: $MISP_DIR/app/Console/cake Admin updateJSON
+
+      - name: Turn MISP live
+        run: $MISP_DIR/app/Console/cake Admin live 1
+
+      - name: Fix permissions
+        run: |
+          sudo chmod +x /home/runner/work
+          sudo chmod +x /home/runner
+          sudo chmod +x /home
+          sudo chmod +x /
+
+      - name: Verify MISP is responding
+        run: |
+          sudo systemctl status apache2 --no-pager -l
+          curl -sSf http://${HOST} -o /dev/null -w "HTTP %{http_code}\n"
+          # Verify API works with the auth key
+          curl -sSf http://${HOST}/servers/getVersion \
+            -H "Authorization: ${AUTH}" \
+            -H "Accept: application/json" | python3 -m json.tool
+
+      # ── Run RustMISP integration tests ──────────────────────────────
+
+      - name: Run integration tests
+        env:
+          MISP_URL: http://localhost
+          MISP_KEY: ${{ env.AUTH }}
+          MISP_VERIFYCERT: "false"
+        run: cargo test -- --ignored
+
+      # ── Diagnostics on failure ──────────────────────────────────────
+
+      - name: MISP application logs
+        if: ${{ always() }}
+        run: |
+          echo "=== MISP error log ==="
+          cat $MISP_DIR/app/tmp/logs/error.log 2>/dev/null || echo "(empty)"
+          echo "=== MISP debug log ==="
+          tail -100 $MISP_DIR/app/tmp/logs/debug.log 2>/dev/null || echo "(empty)"
+          echo "=== Apache error log ==="
+          tail -50 /var/log/apache2/misp.local_error.log 2>/dev/null || echo "(empty)"
+          echo "=== Worker errors ==="
+          cat /tmp/misp-workers-errors.log 2>/dev/null || echo "(empty)"
