@@ -129,26 +129,26 @@ PHASE 2: OBJECT MODEL & PROPOSALS
 [x] Unit tests: object CRUD with wiremock
 
 --- Iteration 5: Proposals, Sightings, Event Reports ---
-[ ] Implement MispShadowAttribute struct (serde)
-[ ] Implement attribute_proposals(event_id) - GET /shadowAttributes/index/{event_id}
-[ ] Implement get_attribute_proposal(id) - GET /shadowAttributes/view/{id}
-[ ] Implement add_attribute_proposal(event_id, attr) - POST /shadowAttributes/add/{event_id}
-[ ] Implement update_attribute_proposal(attr_id, attr) - POST /shadowAttributes/edit/{id}
-[ ] Implement delete_attribute_proposal(id) - POST /shadowAttributes/delete/{id}
-[ ] Implement accept_attribute_proposal(id) - POST /shadowAttributes/accept/{id}
-[ ] Implement discard_attribute_proposal(id) - POST /shadowAttributes/discard/{id}
-[ ] Implement MispSighting struct (serde)
-[ ] Implement sightings(entity) - GET /sightings/index/{id}
-[ ] Implement add_sighting(sighting, attribute) - POST /sightings/add/{attr_id}
-[ ] Implement delete_sighting(id) - POST /sightings/delete/{id}
-[ ] Implement MispEventReport struct (serde)
-[ ] Implement get_event_report(id) - GET /eventReports/view/{id}
-[ ] Implement get_event_reports(event_id) - GET /eventReports/index/event_id:{id}
-[ ] Implement add_event_report(event_id, report) - POST /eventReports/add/{event_id}
-[ ] Implement update_event_report(report) - POST /eventReports/edit/{id}
-[ ] Implement delete_event_report(id, hard) - POST /eventReports/delete/{id}/{hard}
-[ ] Unit tests: serde round-trips for all new types
-[ ] Unit tests: proposal workflow with wiremock
+[x] Implement MispShadowAttribute struct (serde)
+[x] Implement attribute_proposals(event_id) - GET /shadowAttributes/index/{event_id}
+[x] Implement get_attribute_proposal(id) - GET /shadowAttributes/view/{id}
+[x] Implement add_attribute_proposal(event_id, attr) - POST /shadowAttributes/add/{event_id}
+[x] Implement update_attribute_proposal(attr_id, attr) - POST /shadowAttributes/edit/{id}
+[x] Implement delete_attribute_proposal(id) - POST /shadowAttributes/delete/{id}
+[x] Implement accept_attribute_proposal(id) - POST /shadowAttributes/accept/{id}
+[x] Implement discard_attribute_proposal(id) - POST /shadowAttributes/discard/{id}
+[x] Implement MispSighting struct (serde)
+[x] Implement sightings(entity) - GET /sightings/index/{id}
+[x] Implement add_sighting(sighting, attribute) - POST /sightings/add/{attr_id}
+[x] Implement delete_sighting(id) - POST /sightings/delete/{id}
+[x] Implement MispEventReport struct (serde)
+[x] Implement get_event_report(id) - GET /eventReports/view/{id}
+[x] Implement get_event_reports(event_id) - GET /eventReports/index/event_id:{id}
+[x] Implement add_event_report(event_id, report) - POST /eventReports/add/{event_id}
+[x] Implement update_event_report(report) - POST /eventReports/edit/{id}
+[x] Implement delete_event_report(id, hard) - POST /eventReports/delete/{id}/{hard}
+[x] Unit tests: serde round-trips for all new types
+[x] Unit tests: proposal workflow with wiremock
 
 ================================================================================
 PHASE 3: INTELLIGENCE LAYER

@@ -9,7 +9,10 @@ use url::Url;
 use crate::error::{MispError, MispResult};
 use crate::models::attribute::MispAttribute;
 use crate::models::event::MispEvent;
+use crate::models::event_report::MispEventReport;
 use crate::models::object::{MispObject, MispObjectReference, MispObjectTemplate};
+use crate::models::shadow_attribute::MispShadowAttribute;
+use crate::models::sighting::MispSighting;
 use crate::models::tag::MispTag;
 
 /// Async client for the MISP REST API.
@@ -727,6 +730,231 @@ impl MispClient {
     pub async fn update_object_templates(&self) -> MispResult<Value> {
         self.post("objectTemplates/update", &serde_json::json!({}))
             .await
+    }
+
+    // ── Attribute Proposals (Shadow Attributes) ─────────────────────
+
+    /// List attribute proposals for an event.
+    pub async fn attribute_proposals(&self, event_id: i64) -> MispResult<Vec<MispShadowAttribute>> {
+        let json = self
+            .get(&format!("shadowAttributes/index/{event_id}"))
+            .await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut proposals = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("ShadowAttribute").is_some() {
+                &item["ShadowAttribute"]
+            } else {
+                item
+            };
+            let sa: MispShadowAttribute = serde_json::from_value(val.clone())?;
+            proposals.push(sa);
+        }
+        Ok(proposals)
+    }
+
+    /// Get a single attribute proposal by ID.
+    pub async fn get_attribute_proposal(&self, id: i64) -> MispResult<MispShadowAttribute> {
+        let json = self.get(&format!("shadowAttributes/view/{id}")).await?;
+        let val = if json.get("ShadowAttribute").is_some() {
+            &json["ShadowAttribute"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Propose a new attribute for an event.
+    pub async fn add_attribute_proposal(
+        &self,
+        event_id: i64,
+        attr: &MispShadowAttribute,
+    ) -> MispResult<MispShadowAttribute> {
+        let body = serde_json::to_value(attr)?;
+        let json = self
+            .post(&format!("shadowAttributes/add/{event_id}"), &body)
+            .await?;
+        let val = if json.get("ShadowAttribute").is_some() {
+            &json["ShadowAttribute"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Propose a modification to an existing attribute.
+    pub async fn update_attribute_proposal(
+        &self,
+        attr_id: i64,
+        attr: &MispShadowAttribute,
+    ) -> MispResult<MispShadowAttribute> {
+        let body = serde_json::to_value(attr)?;
+        let json = self
+            .post(&format!("shadowAttributes/edit/{attr_id}"), &body)
+            .await?;
+        let val = if json.get("ShadowAttribute").is_some() {
+            &json["ShadowAttribute"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Delete an attribute proposal.
+    pub async fn delete_attribute_proposal(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("shadowAttributes/delete/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Accept an attribute proposal.
+    pub async fn accept_attribute_proposal(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("shadowAttributes/accept/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Discard an attribute proposal.
+    pub async fn discard_attribute_proposal(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("shadowAttributes/discard/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    // ── Sightings ───────────────────────────────────────────────────
+
+    /// List sightings for an attribute or event.
+    pub async fn sightings(&self, id: i64) -> MispResult<Vec<MispSighting>> {
+        let json = self.get(&format!("sightings/index/{id}")).await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut sightings = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("Sighting").is_some() {
+                &item["Sighting"]
+            } else {
+                item
+            };
+            let s: MispSighting = serde_json::from_value(val.clone())?;
+            sightings.push(s);
+        }
+        Ok(sightings)
+    }
+
+    /// Add a sighting. If `attribute_id` is provided, the sighting is added
+    /// to that specific attribute; otherwise it is added generically.
+    pub async fn add_sighting(
+        &self,
+        sighting: &MispSighting,
+        attribute_id: Option<i64>,
+    ) -> MispResult<MispSighting> {
+        let path = match attribute_id {
+            Some(attr_id) => format!("sightings/add/{attr_id}"),
+            None => "sightings/add".to_string(),
+        };
+        let body = serde_json::to_value(sighting)?;
+        let json = self.post(&path, &body).await?;
+        let val = if json.get("Sighting").is_some() {
+            &json["Sighting"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Delete a sighting by ID.
+    pub async fn delete_sighting(&self, id: i64) -> MispResult<Value> {
+        self.post(&format!("sightings/delete/{id}"), &serde_json::json!({}))
+            .await
+    }
+
+    // ── Event Reports ───────────────────────────────────────────────
+
+    /// Get a single event report by ID.
+    pub async fn get_event_report(&self, id: i64) -> MispResult<MispEventReport> {
+        let json = self.get(&format!("eventReports/view/{id}")).await?;
+        let val = if json.get("EventReport").is_some() {
+            &json["EventReport"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Get all event reports for an event.
+    pub async fn get_event_reports(&self, event_id: i64) -> MispResult<Vec<MispEventReport>> {
+        let json = self
+            .get(&format!("eventReports/index/event_id:{event_id}"))
+            .await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut reports = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("EventReport").is_some() {
+                &item["EventReport"]
+            } else {
+                item
+            };
+            let r: MispEventReport = serde_json::from_value(val.clone())?;
+            reports.push(r);
+        }
+        Ok(reports)
+    }
+
+    /// Add an event report to an event.
+    pub async fn add_event_report(
+        &self,
+        event_id: i64,
+        report: &MispEventReport,
+    ) -> MispResult<MispEventReport> {
+        let body = serde_json::to_value(report)?;
+        let json = self
+            .post(&format!("eventReports/add/{event_id}"), &body)
+            .await?;
+        let val = if json.get("EventReport").is_some() {
+            &json["EventReport"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Update an existing event report.
+    pub async fn update_event_report(
+        &self,
+        report: &MispEventReport,
+    ) -> MispResult<MispEventReport> {
+        let id = report
+            .id
+            .ok_or_else(|| MispError::MissingField("id".into()))?;
+        let body = serde_json::to_value(report)?;
+        let json = self.post(&format!("eventReports/edit/{id}"), &body).await?;
+        let val = if json.get("EventReport").is_some() {
+            &json["EventReport"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Delete an event report. If `hard` is true, permanently remove it.
+    pub async fn delete_event_report(&self, id: i64, hard: bool) -> MispResult<Value> {
+        let path = if hard {
+            format!("eventReports/delete/{id}/1")
+        } else {
+            format!("eventReports/delete/{id}")
+        };
+        self.post(&path, &serde_json::json!({})).await
     }
 }
 
@@ -1534,5 +1762,454 @@ mod tests {
         assert_eq!(tmpl.id, Some(1));
         assert_eq!(tmpl.name, "file");
         assert_eq!(tmpl.version, Some(23));
+    }
+
+    // ── Attribute Proposal (Shadow Attribute) tests ─────────────────
+
+    #[tokio::test]
+    async fn attribute_proposals_list() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/shadowAttributes/index/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "ShadowAttribute": {
+                        "id": "1",
+                        "event_id": "1",
+                        "old_id": "0",
+                        "type": "ip-dst",
+                        "category": "Network activity",
+                        "value": "10.0.0.1",
+                        "comment": "",
+                        "to_ids": true,
+                        "proposal_to_delete": false,
+                        "deleted": false,
+                        "disable_correlation": false
+                    }
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let proposals = client.attribute_proposals(1).await.unwrap();
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].attr_type, "ip-dst");
+        assert_eq!(proposals[0].value, "10.0.0.1");
+    }
+
+    #[tokio::test]
+    async fn get_attribute_proposal_unwraps() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/shadowAttributes/view/5"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ShadowAttribute": {
+                    "id": "5",
+                    "event_id": "1",
+                    "old_id": "39",
+                    "type": "md5",
+                    "category": "Payload delivery",
+                    "value": "abc123",
+                    "comment": "Proposed fix",
+                    "to_ids": true,
+                    "proposal_to_delete": false,
+                    "deleted": false,
+                    "disable_correlation": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let sa = client.get_attribute_proposal(5).await.unwrap();
+        assert_eq!(sa.id, Some(5));
+        assert_eq!(sa.old_id, Some(39));
+        assert_eq!(sa.attr_type, "md5");
+        assert_eq!(sa.comment, "Proposed fix");
+    }
+
+    #[tokio::test]
+    async fn add_attribute_proposal_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/shadowAttributes/add/1"))
+            .and(body_partial_json(serde_json::json!({
+                "type": "domain",
+                "category": "Network activity",
+                "value": "evil.com"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ShadowAttribute": {
+                    "id": "10",
+                    "event_id": "1",
+                    "old_id": "0",
+                    "type": "domain",
+                    "category": "Network activity",
+                    "value": "evil.com",
+                    "comment": "",
+                    "to_ids": false,
+                    "proposal_to_delete": false,
+                    "deleted": false,
+                    "disable_correlation": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let sa = crate::MispShadowAttribute::new("domain", "Network activity", "evil.com");
+        let result = client.add_attribute_proposal(1, &sa).await.unwrap();
+        assert_eq!(result.id, Some(10));
+        assert_eq!(result.value, "evil.com");
+    }
+
+    #[tokio::test]
+    async fn accept_attribute_proposal_sends_post() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/shadowAttributes/accept/5"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"saved": true, "success": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.accept_attribute_proposal(5).await.unwrap();
+        assert_eq!(result["saved"], true);
+    }
+
+    #[tokio::test]
+    async fn discard_attribute_proposal_sends_post() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/shadowAttributes/discard/5"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"saved": true, "success": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.discard_attribute_proposal(5).await.unwrap();
+        assert_eq!(result["saved"], true);
+    }
+
+    #[tokio::test]
+    async fn delete_attribute_proposal_sends_post() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/shadowAttributes/delete/5"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Proposal deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_attribute_proposal(5).await.unwrap();
+        assert_eq!(result["message"], "Proposal deleted.");
+    }
+
+    // ── Sighting tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn sightings_list() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/sightings/index/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "Sighting": {
+                        "id": "1",
+                        "attribute_id": "7",
+                        "event_id": "1",
+                        "org_id": "1",
+                        "date_sighting": "1700000000",
+                        "type": "0",
+                        "source": "honeypot"
+                    }
+                },
+                {
+                    "Sighting": {
+                        "id": "2",
+                        "attribute_id": "7",
+                        "event_id": "1",
+                        "org_id": "2",
+                        "date_sighting": "1700000100",
+                        "type": "1",
+                        "source": "analyst"
+                    }
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let sightings = client.sightings(7).await.unwrap();
+        assert_eq!(sightings.len(), 2);
+        assert_eq!(sightings[0].sighting_type, Some(0));
+        assert_eq!(sightings[0].source.as_deref(), Some("honeypot"));
+        assert_eq!(sightings[1].sighting_type, Some(1));
+    }
+
+    #[tokio::test]
+    async fn add_sighting_to_attribute() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/sightings/add/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Sighting": {
+                    "id": "10",
+                    "attribute_id": "7",
+                    "event_id": "1",
+                    "type": "0",
+                    "date_sighting": "1700000000"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let s = crate::MispSighting::new();
+        let result = client.add_sighting(&s, Some(7)).await.unwrap();
+        assert_eq!(result.id, Some(10));
+        assert_eq!(result.attribute_id, Some(7));
+    }
+
+    #[tokio::test]
+    async fn add_sighting_without_attribute_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/sightings/add"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Sighting": {
+                    "id": "11",
+                    "type": "0",
+                    "date_sighting": "1700000000"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let s = crate::MispSighting::new();
+        let result = client.add_sighting(&s, None).await.unwrap();
+        assert_eq!(result.id, Some(11));
+    }
+
+    #[tokio::test]
+    async fn delete_sighting_sends_post() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/sightings/delete/10"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Sighting deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_sighting(10).await.unwrap();
+        assert_eq!(result["message"], "Sighting deleted.");
+    }
+
+    // ── Event Report tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_event_report_unwraps() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/eventReports/view/10"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "EventReport": {
+                    "id": "10",
+                    "uuid": "report-uuid",
+                    "event_id": "1",
+                    "name": "Incident Report",
+                    "content": "# Analysis\n\nDetails here.",
+                    "distribution": "0",
+                    "deleted": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let report = client.get_event_report(10).await.unwrap();
+        assert_eq!(report.id, Some(10));
+        assert_eq!(report.name, "Incident Report");
+        assert_eq!(report.event_id, Some(1));
+    }
+
+    #[tokio::test]
+    async fn get_event_reports_list() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/eventReports/index/event_id:1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "EventReport": {
+                        "id": "10",
+                        "event_id": "1",
+                        "name": "Report A",
+                        "content": "Content A",
+                        "deleted": false
+                    }
+                },
+                {
+                    "EventReport": {
+                        "id": "11",
+                        "event_id": "1",
+                        "name": "Report B",
+                        "content": "Content B",
+                        "deleted": false
+                    }
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let reports = client.get_event_reports(1).await.unwrap();
+        assert_eq!(reports.len(), 2);
+        assert_eq!(reports[0].name, "Report A");
+        assert_eq!(reports[1].name, "Report B");
+    }
+
+    #[tokio::test]
+    async fn add_event_report_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/eventReports/add/1"))
+            .and(body_partial_json(serde_json::json!({
+                "name": "New Report",
+                "content": "Report content"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "EventReport": {
+                    "id": "20",
+                    "event_id": "1",
+                    "name": "New Report",
+                    "content": "Report content",
+                    "deleted": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let report = crate::MispEventReport::new("New Report", "Report content");
+        let result = client.add_event_report(1, &report).await.unwrap();
+        assert_eq!(result.id, Some(20));
+        assert_eq!(result.name, "New Report");
+    }
+
+    #[tokio::test]
+    async fn update_event_report_requires_id() {
+        let client = MispClient::new("https://misp.example.com", "key", false).unwrap();
+        let report = crate::MispEventReport::new("Test", "Content");
+        let result = client.update_event_report(&report).await;
+        assert!(matches!(result, Err(MispError::MissingField(_))));
+    }
+
+    #[tokio::test]
+    async fn delete_event_report_soft() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/eventReports/delete/10"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Event report deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_event_report(10, false).await.unwrap();
+        assert_eq!(result["message"], "Event report deleted.");
+    }
+
+    #[tokio::test]
+    async fn delete_event_report_hard() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/eventReports/delete/10/1"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"message": "Event report permanently deleted."}),
+                ),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_event_report(10, true).await.unwrap();
+        assert_eq!(result["message"], "Event report permanently deleted.");
     }
 }
