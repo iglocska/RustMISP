@@ -380,7 +380,7 @@ PHASE 6: TOOLS & POLISH
 [ ]   - testlive_sync.py
 [ ]   - All test data files (JSON, CSV, email, STIX, etc.)
 [ ] Verify Python tests still pass with: cd tests/python && pytest
-[ ] Unit tests: blocking client mirrors async behavior
+[x] Unit tests: blocking client mirrors async behavior
 
 --- Iteration 14: Integration Tests, Examples, Documentation ---
 [ ] Write Rust integration tests mirroring testlive_comprehensive.py key scenarios:

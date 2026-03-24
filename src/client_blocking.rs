@@ -1515,6 +1515,37 @@ pub fn register_user_blocking(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{body_partial_json, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Helper: start a wiremock server on a background multi-threaded runtime
+    /// so the blocking client's own single-threaded runtime can reach it.
+    struct MockEnv {
+        _rt: tokio::runtime::Runtime,
+        server: MockServer,
+    }
+
+    impl MockEnv {
+        fn new() -> Self {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let server = rt.block_on(MockServer::start());
+            Self { _rt: rt, server }
+        }
+
+        fn mount(&self, mock: Mock) {
+            self._rt.block_on(mock.mount(&self.server));
+        }
+
+        fn client(&self) -> MispClientBlocking {
+            self.client_with_key("test-api-key")
+        }
+
+        fn client_with_key(&self, key: &str) -> MispClientBlocking {
+            MispClientBlocking::new(self.server.uri(), key, false).unwrap()
+        }
+    }
+
+    // ── Construction tests ───────────────────────────────────────────
 
     #[test]
     fn test_blocking_client_construction() {
@@ -1522,6 +1553,12 @@ mod tests {
         assert!(client.is_ok());
         let client = client.unwrap();
         assert_eq!(client.base_url().as_str(), "https://misp.example.com/");
+    }
+
+    #[test]
+    fn test_blocking_client_invalid_url() {
+        let client = MispClientBlocking::new("not a url :::", "key", true);
+        assert!(client.is_err());
     }
 
     #[test]
@@ -1558,5 +1595,380 @@ mod tests {
             MispClientBlocking::new("https://misp.example.com", "test-key", false).unwrap();
         let inner = client.inner();
         assert_eq!(inner.base_url().as_str(), "https://misp.example.com/");
+    }
+
+    // ── Auth & error handling tests ──────────────────────────────────
+
+    #[test]
+    fn test_blocking_auth_header_sent() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET"))
+                .and(header("Authorization", "my-secret-key"))
+                .and(header("Accept", "application/json"))
+                .and(header("Content-Type", "application/json"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
+                ),
+        );
+
+        let client = env.client_with_key("my-secret-key");
+        let result = client.misp_instance_version();
+        // The mock matches on the Authorization header; if it didn't match we'd get an error.
+        // misp_instance_version hits /servers/getVersion which won't match the mock path,
+        // so let's use describe_types_remote instead or test via a more general endpoint.
+        // Actually, the mock has no path constraint so it matches any GET.
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_blocking_auth_error() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(403).set_body_string("Forbidden")),
+        );
+
+        let client = env.client();
+        let result = client.misp_instance_version();
+        assert!(matches!(result, Err(MispError::AuthError(_))));
+    }
+
+    #[test]
+    fn test_blocking_not_found_error() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(404).set_body_string("Not found")),
+        );
+
+        let client = env.client();
+        let result = client.describe_types_remote();
+        assert!(matches!(result, Err(MispError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_blocking_api_error() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET")).respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_json(serde_json::json!({"message": "Internal error"})),
+            ),
+        );
+
+        let client = env.client();
+        let result = client.misp_instance_version();
+        match result {
+            Err(MispError::ApiError { status, message }) => {
+                assert_eq!(status, 500);
+                assert_eq!(message, "Internal error");
+            }
+            other => panic!("Expected ApiError, got {:?}", other),
+        }
+    }
+
+    // ── Server info tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_blocking_misp_instance_version() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET"))
+                .and(path("/servers/getVersion"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "version": "2.4.180",
+                    "perm_sync": false,
+                    "perm_sighting": false
+                }))),
+        );
+
+        let client = env.client();
+        let result = client.misp_instance_version().unwrap();
+        assert_eq!(result["version"], "2.4.180");
+    }
+
+    // ── Event CRUD tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_blocking_get_event() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET"))
+                .and(path("/events/view/42"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "Event": {
+                        "id": "42",
+                        "info": "Test Event",
+                        "published": false,
+                        "date": "2024-01-15",
+                        "threat_level_id": "2",
+                        "analysis": "1",
+                        "distribution": "0"
+                    }
+                }))),
+        );
+
+        let client = env.client();
+        let event = client.get_event(42).unwrap();
+        assert_eq!(event.id, Some(42));
+        assert_eq!(event.info, "Test Event");
+        assert!(!event.published);
+        assert_eq!(event.threat_level_id, Some(2));
+    }
+
+    #[test]
+    fn test_blocking_add_event() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("POST"))
+                .and(path("/events/add"))
+                .and(body_partial_json(serde_json::json!({
+                    "Event": { "info": "New event" }
+                })))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "Event": {
+                        "id": "99",
+                        "info": "New event",
+                        "published": false,
+                        "uuid": "aaaa-bbbb-cccc"
+                    }
+                }))),
+        );
+
+        let client = env.client();
+        let event = crate::MispEvent::new("New event");
+        let result = client.add_event(&event).unwrap();
+        assert_eq!(result.id, Some(99));
+        assert_eq!(result.info, "New event");
+    }
+
+    #[test]
+    fn test_blocking_event_exists() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("HEAD"))
+                .and(path("/events/view/1"))
+                .respond_with(ResponseTemplate::new(200)),
+        );
+
+        let client = env.client();
+        assert!(client.event_exists(1).unwrap());
+    }
+
+    #[test]
+    fn test_blocking_event_not_exists() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("HEAD"))
+                .and(path("/events/view/999"))
+                .respond_with(ResponseTemplate::new(404)),
+        );
+
+        let client = env.client();
+        assert!(!client.event_exists(999).unwrap());
+    }
+
+    #[test]
+    fn test_blocking_delete_event() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("POST"))
+                .and(path("/events/delete/42"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({"message": "Event deleted."})),
+                ),
+        );
+
+        let client = env.client();
+        let result = client.delete_event(42).unwrap();
+        assert_eq!(result["message"], "Event deleted.");
+    }
+
+    #[test]
+    fn test_blocking_events_list() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET"))
+                .and(path("/events/index"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                    {"id": "1", "info": "Event A", "published": true},
+                    {"id": "2", "info": "Event B", "published": false}
+                ]))),
+        );
+
+        let client = env.client();
+        let events = client.events().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].info, "Event A");
+        assert_eq!(events[1].info, "Event B");
+    }
+
+    #[test]
+    fn test_blocking_publish_with_alert() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("POST"))
+                .and(path("/events/alert/5"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({"saved": true, "success": true})),
+                ),
+        );
+
+        let client = env.client();
+        let result = client.publish(5, true).unwrap();
+        assert_eq!(result["saved"], true);
+    }
+
+    #[test]
+    fn test_blocking_publish_without_alert() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("POST"))
+                .and(path("/events/publish/5"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"saved": true})),
+                ),
+        );
+
+        let client = env.client();
+        let result = client.publish(5, false).unwrap();
+        assert_eq!(result["saved"], true);
+    }
+
+    // ── Attribute CRUD tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_blocking_get_attribute() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET"))
+                .and(path("/attributes/view/7"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "Attribute": {
+                        "id": "7",
+                        "event_id": "1",
+                        "type": "ip-dst",
+                        "category": "Network activity",
+                        "value": "10.0.0.1",
+                        "to_ids": true,
+                        "comment": "",
+                        "deleted": false,
+                        "disable_correlation": false
+                    }
+                }))),
+        );
+
+        let client = env.client();
+        let attr = client.get_attribute(7).unwrap();
+        assert_eq!(attr.id, Some(7));
+        assert_eq!(attr.attr_type, "ip-dst");
+        assert_eq!(attr.value, "10.0.0.1");
+        assert!(attr.to_ids);
+    }
+
+    #[test]
+    fn test_blocking_add_attribute() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("POST"))
+                .and(path("/attributes/add/3"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "Attribute": {
+                        "id": "100",
+                        "event_id": "3",
+                        "type": "domain",
+                        "category": "Network activity",
+                        "value": "evil.com",
+                        "to_ids": false,
+                        "comment": "",
+                        "deleted": false,
+                        "disable_correlation": false
+                    }
+                }))),
+        );
+
+        let client = env.client();
+        let attr = crate::MispAttribute::new("domain", "Network activity", "evil.com");
+        let result = client.add_attribute(3, &attr).unwrap();
+        assert_eq!(result.id, Some(100));
+        assert_eq!(result.value, "evil.com");
+    }
+
+    #[test]
+    fn test_blocking_delete_attribute_hard() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("POST"))
+                .and(path("/attributes/delete/50"))
+                .and(body_partial_json(serde_json::json!({"hard_delete": 1})))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({"message": "Attribute deleted."})),
+                ),
+        );
+
+        let client = env.client();
+        let result = client.delete_attribute(50, true).unwrap();
+        assert_eq!(result["message"], "Attribute deleted.");
+    }
+
+    // ── Tag tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_blocking_tags_list() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET"))
+                .and(path("/tags/index"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "Tag": [
+                        {"id": "1", "name": "tlp:white", "colour": "#ffffff"},
+                        {"id": "2", "name": "tlp:green", "colour": "#00ff00"}
+                    ]
+                }))),
+        );
+
+        let client = env.client();
+        let tags = client.tags().unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].name, "tlp:white");
+    }
+
+    #[test]
+    fn test_blocking_search_tags() {
+        let env = MockEnv::new();
+
+        env.mount(
+            Mock::given(method("GET"))
+                .and(path("/tags/search/tlp"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                    {"id": "1", "name": "tlp:white"},
+                    {"id": "2", "name": "tlp:green"}
+                ]))),
+        );
+
+        let client = env.client();
+        let result = client.search_tags("tlp", false).unwrap();
+        assert_eq!(result.len(), 2);
     }
 }
