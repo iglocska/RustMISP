@@ -400,7 +400,7 @@ PHASE 6: TOOLS & POLISH
 [x]   - manage_tags.rs
 [x]   - feed_operations.rs
 [x]   - user_management.rs
-[ ]   - galaxy_operations.rs
+[x]   - galaxy_operations.rs
 [ ]   - sightings.rs
 [ ]   - sharing_groups.rs
 [ ] Complete rustdoc documentation for all public types and methods
