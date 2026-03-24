@@ -247,6 +247,13 @@ jobs:
       - name: Verify Redis is ready
         run: $MISP_DIR/app/Console/cake Admin redisReady
 
+      - name: Fix permissions
+        run: |
+          sudo chmod +x /home/runner/work
+          sudo chmod +x /home/runner
+          sudo chmod +x /home
+          sudo chmod +x /
+
       - name: Start background workers
         run: |
           sudo pip install supervisor
@@ -264,13 +271,6 @@ jobs:
 
       - name: Turn MISP live
         run: $MISP_DIR/app/Console/cake Admin live 1
-
-      - name: Fix permissions
-        run: |
-          sudo chmod +x /home/runner/work
-          sudo chmod +x /home/runner
-          sudo chmod +x /home
-          sudo chmod +x /
 
       - name: Verify MISP is responding
         run: |
