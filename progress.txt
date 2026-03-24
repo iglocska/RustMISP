@@ -181,37 +181,37 @@ PHASE 3: INTELLIGENCE LAYER
 [x] Unit tests: serde round-trips for taxonomy/warninglist/noticelist
 
 --- Iteration 7: Galaxies, Decaying Models, Correlation Exclusions ---
-[ ] Implement MispGalaxy struct (serde)
-[ ] Implement MispGalaxyCluster struct (serde)
-[ ] Implement MispGalaxyClusterElement struct (serde)
-[ ] Implement MispGalaxyClusterRelation struct (serde)
-[ ] Implement galaxies(update) - GET /galaxies/index
-[ ] Implement search_galaxy(value) - POST /galaxies
-[ ] Implement get_galaxy(id, with_cluster) - GET /galaxies/view/{id}
-[ ] Implement search_galaxy_clusters(galaxy, context, searchall) - POST /galaxy_clusters/restSearch
-[ ] Implement update_galaxies() - POST /galaxies/update
-[ ] Implement get_galaxy_cluster(id) - GET /galaxy_clusters/view/{id}
-[ ] Implement add_galaxy_cluster(galaxy, cluster) - POST /galaxy_clusters/add/{galaxy_id}
-[ ] Implement update_galaxy_cluster(cluster) - POST /galaxy_clusters/edit/{id}
-[ ] Implement publish_galaxy_cluster(id) - POST /galaxy_clusters/publish/{id}
-[ ] Implement fork_galaxy_cluster(galaxy, cluster) - POST /galaxy_clusters/add/{galaxy_id}
-[ ] Implement delete_galaxy_cluster(id, hard) - POST /galaxy_clusters/delete/{id}/{hard}
-[ ] Implement add_galaxy_cluster_relation(rel) - POST /galaxy_cluster_relations/add
-[ ] Implement update_galaxy_cluster_relation(rel) - POST /galaxy_cluster_relations/edit/{id}
-[ ] Implement delete_galaxy_cluster_relation(id) - POST /galaxy_cluster_relations/delete/{id}
-[ ] Implement attach_galaxy_cluster(entity, cluster, local) - POST /galaxies/attachCluster/{uuid}/{tag}
-[ ] Implement MispDecayingModel struct (serde)
-[ ] Implement update_decaying_models() - POST /decayingModel/update
-[ ] Implement decaying_models() - GET /decayingModel/index
-[ ] Implement enable_decaying_model(id) - POST /decayingModel/enable/{id}
-[ ] Implement disable_decaying_model(id) - POST /decayingModel/disable/{id}
-[ ] Implement MispCorrelationExclusion struct (serde)
-[ ] Implement correlation_exclusions() - GET /correlationExclusions/index
-[ ] Implement get_correlation_exclusion(id) - GET /correlationExclusions/view/{id}
-[ ] Implement add_correlation_exclusion(exc) - POST /correlationExclusions/add
-[ ] Implement delete_correlation_exclusion(id) - POST /correlationExclusions/delete/{id}
-[ ] Implement clean_correlation_exclusions() - POST /correlationExclusions/clean
-[ ] Unit tests: galaxy model serde round-trips
+[x] Implement MispGalaxy struct (serde)
+[x] Implement MispGalaxyCluster struct (serde)
+[x] Implement MispGalaxyClusterElement struct (serde)
+[x] Implement MispGalaxyClusterRelation struct (serde)
+[x] Implement galaxies(update) - GET /galaxies/index
+[x] Implement search_galaxy(value) - POST /galaxies
+[x] Implement get_galaxy(id, with_cluster) - GET /galaxies/view/{id}
+[x] Implement search_galaxy_clusters(galaxy, context, searchall) - POST /galaxy_clusters/restSearch
+[x] Implement update_galaxies() - POST /galaxies/update
+[x] Implement get_galaxy_cluster(id) - GET /galaxy_clusters/view/{id}
+[x] Implement add_galaxy_cluster(galaxy, cluster) - POST /galaxy_clusters/add/{galaxy_id}
+[x] Implement update_galaxy_cluster(cluster) - POST /galaxy_clusters/edit/{id}
+[x] Implement publish_galaxy_cluster(id) - POST /galaxy_clusters/publish/{id}
+[x] Implement fork_galaxy_cluster(galaxy, cluster) - POST /galaxy_clusters/add/{galaxy_id}
+[x] Implement delete_galaxy_cluster(id, hard) - POST /galaxy_clusters/delete/{id}/{hard}
+[x] Implement add_galaxy_cluster_relation(rel) - POST /galaxy_cluster_relations/add
+[x] Implement update_galaxy_cluster_relation(rel) - POST /galaxy_cluster_relations/edit/{id}
+[x] Implement delete_galaxy_cluster_relation(id) - POST /galaxy_cluster_relations/delete/{id}
+[x] Implement attach_galaxy_cluster(entity, cluster, local) - POST /galaxies/attachCluster/{uuid}/{tag}
+[x] Implement MispDecayingModel struct (serde)
+[x] Implement update_decaying_models() - POST /decayingModel/update
+[x] Implement decaying_models() - GET /decayingModel/index
+[x] Implement enable_decaying_model(id) - POST /decayingModel/enable/{id}
+[x] Implement disable_decaying_model(id) - POST /decayingModel/disable/{id}
+[x] Implement MispCorrelationExclusion struct (serde)
+[x] Implement correlation_exclusions() - GET /correlationExclusions/index
+[x] Implement get_correlation_exclusion(id) - GET /correlationExclusions/view/{id}
+[x] Implement add_correlation_exclusion(exc) - POST /correlationExclusions/add
+[x] Implement delete_correlation_exclusion(id) - POST /correlationExclusions/delete/{id}
+[x] Implement clean_correlation_exclusions() - POST /correlationExclusions/clean
+[x] Unit tests: galaxy model serde round-trips
 
 ================================================================================
 PHASE 4: ADMINISTRATION

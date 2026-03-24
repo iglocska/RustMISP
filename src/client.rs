@@ -8,8 +8,10 @@ use url::Url;
 
 use crate::error::{MispError, MispResult};
 use crate::models::attribute::MispAttribute;
+use crate::models::correlation::{MispCorrelationExclusion, MispDecayingModel};
 use crate::models::event::MispEvent;
 use crate::models::event_report::MispEventReport;
+use crate::models::galaxy::{MispGalaxy, MispGalaxyCluster, MispGalaxyClusterRelation};
 use crate::models::noticelist::MispNoticelist;
 use crate::models::object::{MispObject, MispObjectReference, MispObjectTemplate};
 use crate::models::shadow_attribute::MispShadowAttribute;
@@ -1168,6 +1170,330 @@ impl MispClient {
     /// Update all noticelists from the remote MISP noticelist repository.
     pub async fn update_noticelists(&self) -> MispResult<Value> {
         self.post("noticelists/update", &serde_json::json!({}))
+            .await
+    }
+
+    // ── Galaxies ────────────────────────────────────────────────────────
+
+    /// List all galaxies on the MISP instance.
+    pub async fn galaxies(&self, update: bool) -> MispResult<Vec<MispGalaxy>> {
+        if update {
+            self.update_galaxies().await?;
+        }
+        let json = self.get("galaxies/index").await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut galaxies = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("Galaxy").is_some() {
+                &item["Galaxy"]
+            } else {
+                item
+            };
+            let g: MispGalaxy = serde_json::from_value(val.clone())?;
+            galaxies.push(g);
+        }
+        Ok(galaxies)
+    }
+
+    /// Search galaxies by value.
+    pub async fn search_galaxy(&self, value: &str) -> MispResult<Value> {
+        self.post("galaxies", &serde_json::json!({"value": value}))
+            .await
+    }
+
+    /// Get a single galaxy by ID, optionally including its clusters.
+    pub async fn get_galaxy(&self, id: i64, with_cluster: bool) -> MispResult<MispGalaxy> {
+        let _ = with_cluster; // MISP always returns clusters when available
+        let json = self.get(&format!("galaxies/view/{id}")).await?;
+        let val = if json.get("Galaxy").is_some() {
+            // Merge nested GalaxyCluster array into the Galaxy object
+            let mut galaxy_val = json["Galaxy"].clone();
+            if let Some(clusters) = json.get("GalaxyCluster") {
+                galaxy_val["GalaxyCluster"] = clusters.clone();
+            }
+            galaxy_val
+        } else {
+            json.clone()
+        };
+        Ok(serde_json::from_value(val)?)
+    }
+
+    /// Search galaxy clusters using restSearch.
+    pub async fn search_galaxy_clusters(
+        &self,
+        galaxy: &str,
+        context: Option<&str>,
+        searchall: bool,
+    ) -> MispResult<Value> {
+        let mut body = serde_json::Map::new();
+        body.insert("galaxy".into(), serde_json::json!(galaxy));
+        if let Some(ctx) = context {
+            body.insert("context".into(), serde_json::json!(ctx));
+        }
+        if searchall {
+            body.insert("searchall".into(), serde_json::json!(1));
+        }
+        self.post("galaxy_clusters/restSearch", &Value::Object(body))
+            .await
+    }
+
+    /// Update all galaxies from the remote MISP galaxy repository.
+    pub async fn update_galaxies(&self) -> MispResult<Value> {
+        self.post("galaxies/update", &serde_json::json!({})).await
+    }
+
+    /// Get a single galaxy cluster by ID.
+    pub async fn get_galaxy_cluster(&self, id: i64) -> MispResult<MispGalaxyCluster> {
+        let json = self.get(&format!("galaxy_clusters/view/{id}")).await?;
+        let val = if json.get("GalaxyCluster").is_some() {
+            &json["GalaxyCluster"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Add a new galaxy cluster to a galaxy.
+    pub async fn add_galaxy_cluster(
+        &self,
+        galaxy_id: i64,
+        cluster: &MispGalaxyCluster,
+    ) -> MispResult<MispGalaxyCluster> {
+        let body = serde_json::json!({"GalaxyCluster": cluster});
+        let json = self
+            .post(&format!("galaxy_clusters/add/{galaxy_id}"), &body)
+            .await?;
+        let val = if json.get("GalaxyCluster").is_some() {
+            &json["GalaxyCluster"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Update an existing galaxy cluster.
+    pub async fn update_galaxy_cluster(
+        &self,
+        cluster: &MispGalaxyCluster,
+    ) -> MispResult<MispGalaxyCluster> {
+        let id = cluster
+            .id
+            .ok_or_else(|| MispError::MissingField("GalaxyCluster.id".into()))?;
+        let body = serde_json::json!({"GalaxyCluster": cluster});
+        let json = self
+            .post(&format!("galaxy_clusters/edit/{id}"), &body)
+            .await?;
+        let val = if json.get("GalaxyCluster").is_some() {
+            &json["GalaxyCluster"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Publish a galaxy cluster.
+    pub async fn publish_galaxy_cluster(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("galaxy_clusters/publish/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Fork a galaxy cluster into a galaxy.
+    pub async fn fork_galaxy_cluster(
+        &self,
+        galaxy_id: i64,
+        cluster: &MispGalaxyCluster,
+    ) -> MispResult<Value> {
+        let body = serde_json::json!({"GalaxyCluster": cluster});
+        self.post(&format!("galaxy_clusters/add/{galaxy_id}"), &body)
+            .await
+    }
+
+    /// Delete a galaxy cluster by ID, optionally hard-deleting.
+    pub async fn delete_galaxy_cluster(&self, id: i64, hard: bool) -> MispResult<Value> {
+        if hard {
+            self.post(
+                &format!("galaxy_clusters/delete/{id}/1"),
+                &serde_json::json!({}),
+            )
+            .await
+        } else {
+            self.post(
+                &format!("galaxy_clusters/delete/{id}"),
+                &serde_json::json!({}),
+            )
+            .await
+        }
+    }
+
+    /// Add a relation between galaxy clusters.
+    pub async fn add_galaxy_cluster_relation(
+        &self,
+        relation: &MispGalaxyClusterRelation,
+    ) -> MispResult<MispGalaxyClusterRelation> {
+        let body = serde_json::json!({"GalaxyClusterRelation": relation});
+        let json = self.post("galaxy_cluster_relations/add", &body).await?;
+        let val = if json.get("GalaxyClusterRelation").is_some() {
+            &json["GalaxyClusterRelation"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Update an existing galaxy cluster relation.
+    pub async fn update_galaxy_cluster_relation(
+        &self,
+        relation: &MispGalaxyClusterRelation,
+    ) -> MispResult<MispGalaxyClusterRelation> {
+        let id = relation
+            .id
+            .ok_or_else(|| MispError::MissingField("GalaxyClusterRelation.id".into()))?;
+        let body = serde_json::json!({"GalaxyClusterRelation": relation});
+        let json = self
+            .post(&format!("galaxy_cluster_relations/edit/{id}"), &body)
+            .await?;
+        let val = if json.get("GalaxyClusterRelation").is_some() {
+            &json["GalaxyClusterRelation"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Delete a galaxy cluster relation by ID.
+    pub async fn delete_galaxy_cluster_relation(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("galaxy_cluster_relations/delete/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Attach a galaxy cluster to an entity (event, attribute, etc.) by UUID.
+    pub async fn attach_galaxy_cluster(
+        &self,
+        entity_uuid: &str,
+        cluster_uuid: &str,
+        local: bool,
+    ) -> MispResult<Value> {
+        self.post(
+            &format!("galaxies/attachCluster/{entity_uuid}/{cluster_uuid}"),
+            &serde_json::json!({"local": if local { 1 } else { 0 }}),
+        )
+        .await
+    }
+
+    // ── Decaying Models ─────────────────────────────────────────────────
+
+    /// Update all decaying models from the MISP repository.
+    pub async fn update_decaying_models(&self) -> MispResult<Value> {
+        self.post("decayingModel/update", &serde_json::json!({}))
+            .await
+    }
+
+    /// List all decaying models.
+    pub async fn decaying_models(&self) -> MispResult<Vec<MispDecayingModel>> {
+        let json = self.get("decayingModel/index").await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut models = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("DecayingModel").is_some() {
+                &item["DecayingModel"]
+            } else {
+                item
+            };
+            let m: MispDecayingModel = serde_json::from_value(val.clone())?;
+            models.push(m);
+        }
+        Ok(models)
+    }
+
+    /// Enable a decaying model by ID.
+    pub async fn enable_decaying_model(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("decayingModel/enable/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Disable a decaying model by ID.
+    pub async fn disable_decaying_model(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("decayingModel/disable/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    // ── Correlation Exclusions ──────────────────────────────────────────
+
+    /// List all correlation exclusions.
+    pub async fn correlation_exclusions(&self) -> MispResult<Vec<MispCorrelationExclusion>> {
+        let json = self.get("correlationExclusions/index").await?;
+        let arr = json
+            .as_array()
+            .ok_or_else(|| MispError::UnexpectedResponse("expected array".into()))?;
+        let mut exclusions = Vec::with_capacity(arr.len());
+        for item in arr {
+            let val = if item.get("CorrelationExclusion").is_some() {
+                &item["CorrelationExclusion"]
+            } else {
+                item
+            };
+            let e: MispCorrelationExclusion = serde_json::from_value(val.clone())?;
+            exclusions.push(e);
+        }
+        Ok(exclusions)
+    }
+
+    /// Get a single correlation exclusion by ID.
+    pub async fn get_correlation_exclusion(&self, id: i64) -> MispResult<MispCorrelationExclusion> {
+        let json = self
+            .get(&format!("correlationExclusions/view/{id}"))
+            .await?;
+        let val = if json.get("CorrelationExclusion").is_some() {
+            &json["CorrelationExclusion"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Add a new correlation exclusion.
+    pub async fn add_correlation_exclusion(
+        &self,
+        exclusion: &MispCorrelationExclusion,
+    ) -> MispResult<MispCorrelationExclusion> {
+        let body = serde_json::json!({"CorrelationExclusion": exclusion});
+        let json = self.post("correlationExclusions/add", &body).await?;
+        let val = if json.get("CorrelationExclusion").is_some() {
+            &json["CorrelationExclusion"]
+        } else {
+            &json
+        };
+        Ok(serde_json::from_value(val.clone())?)
+    }
+
+    /// Delete a correlation exclusion by ID.
+    pub async fn delete_correlation_exclusion(&self, id: i64) -> MispResult<Value> {
+        self.post(
+            &format!("correlationExclusions/delete/{id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Clean all correlation exclusions.
+    pub async fn clean_correlation_exclusions(&self) -> MispResult<Value> {
+        self.post("correlationExclusions/clean", &serde_json::json!({}))
             .await
     }
 }
@@ -2920,5 +3246,586 @@ mod tests {
 
         let result = client.update_noticelists().await.unwrap();
         assert_eq!(result["message"], "Noticelists updated.");
+    }
+
+    // ── Galaxy tests ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn galaxies_list() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/galaxies/index"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "Galaxy": {
+                        "id": "1",
+                        "uuid": "galaxy-uuid-1",
+                        "name": "Threat Actor",
+                        "type": "threat-actor",
+                        "description": "Known threat actors",
+                        "version": "5",
+                        "namespace": "misp",
+                        "enabled": true,
+                        "local_only": false
+                    }
+                },
+                {
+                    "Galaxy": {
+                        "id": "2",
+                        "uuid": "galaxy-uuid-2",
+                        "name": "Tool",
+                        "type": "tool",
+                        "description": "Known tools",
+                        "version": "3",
+                        "namespace": "misp",
+                        "enabled": true,
+                        "local_only": false
+                    }
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let galaxies = client.galaxies(false).await.unwrap();
+        assert_eq!(galaxies.len(), 2);
+        assert_eq!(galaxies[0].name, "Threat Actor");
+        assert_eq!(galaxies[0].galaxy_type.as_deref(), Some("threat-actor"));
+        assert_eq!(galaxies[1].name, "Tool");
+    }
+
+    #[tokio::test]
+    async fn get_galaxy_with_clusters() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/galaxies/view/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Galaxy": {
+                    "id": "1",
+                    "name": "Threat Actor",
+                    "type": "threat-actor",
+                    "enabled": true,
+                    "local_only": false
+                },
+                "GalaxyCluster": [
+                    {
+                        "id": "42",
+                        "value": "APT28",
+                        "type": "threat-actor",
+                        "default": true,
+                        "published": true
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let g = client.get_galaxy(1, true).await.unwrap();
+        assert_eq!(g.id, Some(1));
+        assert_eq!(g.name, "Threat Actor");
+        assert_eq!(g.galaxy_clusters.len(), 1);
+        assert_eq!(g.galaxy_clusters[0].value, "APT28");
+    }
+
+    #[tokio::test]
+    async fn search_galaxy_posts() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/galaxies"))
+            .and(body_partial_json(serde_json::json!({"value": "APT"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!([{"Galaxy": {"id": "1", "name": "Threat Actor"}}]),
+            ))
+            .mount(&server)
+            .await;
+
+        let result = client.search_galaxy("APT").await.unwrap();
+        assert!(result.is_array());
+    }
+
+    #[tokio::test]
+    async fn update_galaxies_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/galaxies/update"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Galaxies updated."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.update_galaxies().await.unwrap();
+        assert_eq!(result["message"], "Galaxies updated.");
+    }
+
+    #[tokio::test]
+    async fn get_galaxy_cluster_unwraps() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/galaxy_clusters/view/42"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "GalaxyCluster": {
+                    "id": "42",
+                    "uuid": "cluster-uuid",
+                    "type": "threat-actor",
+                    "value": "APT28",
+                    "description": "Russian threat actor",
+                    "default": true,
+                    "published": true
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let c = client.get_galaxy_cluster(42).await.unwrap();
+        assert_eq!(c.id, Some(42));
+        assert_eq!(c.value, "APT28");
+        assert!(c.default);
+    }
+
+    #[tokio::test]
+    async fn add_galaxy_cluster_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/galaxy_clusters/add/1"))
+            .and(body_partial_json(
+                serde_json::json!({"GalaxyCluster": {"value": "NewCluster"}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "GalaxyCluster": {
+                    "id": "100",
+                    "value": "NewCluster",
+                    "default": false,
+                    "published": false
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let c = crate::MispGalaxyCluster::new("NewCluster");
+        let result = client.add_galaxy_cluster(1, &c).await.unwrap();
+        assert_eq!(result.id, Some(100));
+        assert_eq!(result.value, "NewCluster");
+    }
+
+    #[tokio::test]
+    async fn update_galaxy_cluster_requires_id() {
+        let client = MispClient::new("https://misp.example.com", "key", false).unwrap();
+        let c = crate::MispGalaxyCluster::new("test");
+        let result = client.update_galaxy_cluster(&c).await;
+        assert!(matches!(result, Err(MispError::MissingField(_))));
+    }
+
+    #[tokio::test]
+    async fn publish_galaxy_cluster_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/galaxy_clusters/publish/42"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"saved": true, "success": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.publish_galaxy_cluster(42).await.unwrap();
+        assert_eq!(result["saved"], true);
+    }
+
+    #[tokio::test]
+    async fn delete_galaxy_cluster_soft() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/galaxy_clusters/delete/42"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Cluster deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_galaxy_cluster(42, false).await.unwrap();
+        assert_eq!(result["message"], "Cluster deleted.");
+    }
+
+    #[tokio::test]
+    async fn delete_galaxy_cluster_hard() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/galaxy_clusters/delete/42/1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Cluster permanently deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_galaxy_cluster(42, true).await.unwrap();
+        assert_eq!(result["message"], "Cluster permanently deleted.");
+    }
+
+    #[tokio::test]
+    async fn add_galaxy_cluster_relation_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/galaxy_cluster_relations/add"))
+            .and(body_partial_json(serde_json::json!({
+                "GalaxyClusterRelation": {
+                    "referenced_galaxy_cluster_uuid": "target-uuid",
+                    "relationship_type": "uses"
+                }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "GalaxyClusterRelation": {
+                    "id": "10",
+                    "galaxy_cluster_id": "42",
+                    "referenced_galaxy_cluster_uuid": "target-uuid",
+                    "relationship_type": "uses"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let r = crate::MispGalaxyClusterRelation::new("target-uuid", "uses");
+        let result = client.add_galaxy_cluster_relation(&r).await.unwrap();
+        assert_eq!(result.id, Some(10));
+        assert_eq!(result.relationship_type.as_deref(), Some("uses"));
+    }
+
+    #[tokio::test]
+    async fn delete_galaxy_cluster_relation_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/galaxy_cluster_relations/delete/10"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Relation deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_galaxy_cluster_relation(10).await.unwrap();
+        assert_eq!(result["message"], "Relation deleted.");
+    }
+
+    #[tokio::test]
+    async fn attach_galaxy_cluster_posts() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/galaxies/attachCluster/event-uuid/cluster-uuid"))
+            .and(body_partial_json(serde_json::json!({"local": 1})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"saved": true, "success": "Cluster attached."}),
+                ),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client
+            .attach_galaxy_cluster("event-uuid", "cluster-uuid", true)
+            .await
+            .unwrap();
+        assert_eq!(result["saved"], true);
+    }
+
+    // ── Decaying Model tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn decaying_models_list() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/decayingModel/index"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "DecayingModel": {
+                        "id": "1",
+                        "name": "NIDS Simple Decaying Model",
+                        "description": "Simple model",
+                        "enabled": true,
+                        "all_orgs": true
+                    }
+                },
+                {
+                    "DecayingModel": {
+                        "id": "2",
+                        "name": "Phishing Decaying Model",
+                        "description": "Phishing model",
+                        "enabled": false,
+                        "all_orgs": false
+                    }
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let models = client.decaying_models().await.unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].name, "NIDS Simple Decaying Model");
+        assert!(models[0].enabled);
+        assert_eq!(models[1].name, "Phishing Decaying Model");
+        assert!(!models[1].enabled);
+    }
+
+    #[tokio::test]
+    async fn enable_decaying_model_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/decayingModel/enable/1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Model enabled."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.enable_decaying_model(1).await.unwrap();
+        assert_eq!(result["message"], "Model enabled.");
+    }
+
+    #[tokio::test]
+    async fn disable_decaying_model_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/decayingModel/disable/1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Model disabled."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.disable_decaying_model(1).await.unwrap();
+        assert_eq!(result["message"], "Model disabled.");
+    }
+
+    #[tokio::test]
+    async fn update_decaying_models_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/decayingModel/update"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Models updated."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.update_decaying_models().await.unwrap();
+        assert_eq!(result["message"], "Models updated.");
+    }
+
+    // ── Correlation Exclusion tests ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn correlation_exclusions_list() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/correlationExclusions/index"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "CorrelationExclusion": {
+                        "id": "1",
+                        "value": "8.8.8.8",
+                        "comment": "Google DNS"
+                    }
+                },
+                {
+                    "CorrelationExclusion": {
+                        "id": "2",
+                        "value": "1.1.1.1",
+                        "comment": "Cloudflare DNS"
+                    }
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let exclusions = client.correlation_exclusions().await.unwrap();
+        assert_eq!(exclusions.len(), 2);
+        assert_eq!(exclusions[0].value, "8.8.8.8");
+        assert_eq!(exclusions[0].comment.as_deref(), Some("Google DNS"));
+        assert_eq!(exclusions[1].value, "1.1.1.1");
+    }
+
+    #[tokio::test]
+    async fn get_correlation_exclusion_unwraps() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/correlationExclusions/view/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "CorrelationExclusion": {
+                    "id": "1",
+                    "value": "8.8.8.8",
+                    "comment": "Google DNS"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let e = client.get_correlation_exclusion(1).await.unwrap();
+        assert_eq!(e.id, Some(1));
+        assert_eq!(e.value, "8.8.8.8");
+    }
+
+    #[tokio::test]
+    async fn add_correlation_exclusion_sends_body() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/correlationExclusions/add"))
+            .and(body_partial_json(
+                serde_json::json!({"CorrelationExclusion": {"value": "8.8.8.8"}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "CorrelationExclusion": {
+                    "id": "10",
+                    "value": "8.8.8.8",
+                    "comment": null
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let e = crate::MispCorrelationExclusion::new("8.8.8.8");
+        let result = client.add_correlation_exclusion(&e).await.unwrap();
+        assert_eq!(result.id, Some(10));
+        assert_eq!(result.value, "8.8.8.8");
+    }
+
+    #[tokio::test]
+    async fn delete_correlation_exclusion_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/correlationExclusions/delete/1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Exclusion deleted."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.delete_correlation_exclusion(1).await.unwrap();
+        assert_eq!(result["message"], "Exclusion deleted.");
+    }
+
+    #[tokio::test]
+    async fn clean_correlation_exclusions_posts() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = MispClient::new(server.uri(), "key", false).unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/correlationExclusions/clean"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "Exclusions cleaned."})),
+            )
+            .mount(&server)
+            .await;
+
+        let result = client.clean_correlation_exclusions().await.unwrap();
+        assert_eq!(result["message"], "Exclusions cleaned.");
     }
 }
