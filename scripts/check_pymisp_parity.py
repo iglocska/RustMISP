@@ -3,23 +3,46 @@
 RustMISP / PyMISP parity checker.
 
 Compares the public API surface and integration tests of RustMISP against
-PyMISP to identify missing methods and test coverage gaps.
+the latest PyMISP from GitHub to identify missing methods and test gaps.
 
 Usage:
-    python3 scripts/check_pymisp_parity.py [--pymisp-path /path/to/PyMISP]
+    python3 scripts/check_pymisp_parity.py                  # report only
+    python3 scripts/check_pymisp_parity.py --update-readme   # update README badges
 
-If --pymisp-path is not given, the script looks for PyMISP in common locations:
-  - ../PyMISP (sibling directory)
-  - ../../PyMISP
-  - /var/www/MISP7/PyMISP
+The script fetches PyMISP directly from GitHub (no local clone needed).
+For offline use, pass --pymisp-path /path/to/PyMISP.
 """
 
 import argparse
 import ast
-import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# PyMISP fetching
+# ---------------------------------------------------------------------------
+
+PYMISP_REPO = "https://github.com/MISP/PyMISP.git"
+PYMISP_BRANCH = "main"
+
+
+def fetch_pymisp(target_dir: Path) -> Path:
+    """Shallow-clone the PyMISP repo into target_dir."""
+    print(f"Fetching PyMISP from {PYMISP_REPO} ({PYMISP_BRANCH})...")
+    subprocess.run(
+        [
+            "git", "clone", "--depth", "1", "--branch", PYMISP_BRANCH,
+            "--single-branch", PYMISP_REPO, str(target_dir / "PyMISP"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return target_dir / "PyMISP"
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +250,13 @@ def percent(n: int, total: int) -> str:
     return f"{n / total * 100:.1f}%"
 
 
-def run_comparison(pymisp_path: Path):
+def percent_float(n: int, total: int) -> float:
+    if total == 0:
+        return 0.0
+    return n / total * 100
+
+
+def run_comparison(pymisp_path: Path, update_readme: bool = False):
     api_path = pymisp_path / "pymisp" / "api.py"
     test_path = pymisp_path / "tests" / "testlive_comprehensive.py"
 
@@ -373,10 +402,10 @@ def run_comparison(pymisp_path: Path):
             print(f"  {CYAN}+ {test}{RESET}")
 
     # ── Final score ───────────────────────────────────────────────────
-    print_header("Overall Parity Score")
+    method_pct = percent_float(total_matched, total_applicable)
+    test_pct = percent_float(total_tests_covered, total_pymisp_tests)
 
-    method_pct = total_matched / total_applicable * 100 if total_applicable else 0
-    test_pct = total_tests_covered / total_pymisp_tests * 100 if total_pymisp_tests else 0
+    print_header("Overall Parity Score")
 
     bar_width = 40
 
@@ -389,13 +418,78 @@ def run_comparison(pymisp_path: Path):
     print(f"  Tests:   {bar(test_pct)}")
     print()
 
+    # ── Update README badges ──────────────────────────────────────────
+    if update_readme:
+        update_readme_badges(rust_root / "README.md", method_pct, test_pct)
+
+    return method_pct, test_pct
+
+
+# ---------------------------------------------------------------------------
+# README badge updater
+# ---------------------------------------------------------------------------
+
+def badge_color(pct: float) -> str:
+    if pct >= 95:
+        return "brightgreen"
+    elif pct >= 90:
+        return "green"
+    elif pct >= 70:
+        return "yellow"
+    elif pct >= 50:
+        return "orange"
+    else:
+        return "red"
+
+
+def update_readme_badges(readme_path: Path, method_pct: float, test_pct: float):
+    """Update the parity badges in README.md with current values."""
+    if not readme_path.exists():
+        print(f"{RED}Error: {readme_path} not found{RESET}", file=sys.stderr)
+        return
+
+    content = readme_path.read_text()
+    original = content
+
+    # Update API parity badge
+    api_badge = (
+        f"[![PyMISP API parity]"
+        f"(https://img.shields.io/badge/PyMISP_API_parity-{method_pct:.1f}%25-{badge_color(method_pct)}.svg)]"
+        f"(scripts/check_pymisp_parity.py)"
+    )
+    content = re.sub(
+        r"\[!\[PyMISP API parity\]\(https://img\.shields\.io/badge/PyMISP_API_parity-[^)]+\)\]\([^)]+\)",
+        api_badge,
+        content,
+    )
+
+    # Update test parity badge
+    test_badge = (
+        f"[![PyMISP test parity]"
+        f"(https://img.shields.io/badge/PyMISP_test_parity-{test_pct:.1f}%25-{badge_color(test_pct)}.svg)]"
+        f"(scripts/check_pymisp_parity.py)"
+    )
+    content = re.sub(
+        r"\[!\[PyMISP test parity\]\(https://img\.shields\.io/badge/PyMISP_test_parity-[^)]+\)\]\([^)]+\)",
+        test_badge,
+        content,
+    )
+
+    if content != original:
+        readme_path.write_text(content)
+        print(f"\n{GREEN}Updated README.md badges:{RESET}")
+        print(f"  API parity:  {method_pct:.1f}%")
+        print(f"  Test parity: {test_pct:.1f}%")
+    else:
+        print(f"\n{GREEN}README.md badges already up to date.{RESET}")
+
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def find_pymisp_path() -> Path | None:
-    """Try to auto-detect the PyMISP directory."""
+def find_local_pymisp() -> Path | None:
+    """Try to find a local PyMISP checkout (used as fallback)."""
     candidates = [
         Path(__file__).resolve().parent.parent.parent / "PyMISP",  # sibling
         Path(__file__).resolve().parent.parent.parent.parent / "PyMISP",
@@ -415,20 +509,29 @@ def main():
         "--pymisp-path",
         type=Path,
         default=None,
-        help="Path to PyMISP repository root",
+        help="Path to a local PyMISP checkout (default: fetch from GitHub)",
+    )
+    parser.add_argument(
+        "--update-readme",
+        action="store_true",
+        help="Update README.md badge percentages",
     )
     args = parser.parse_args()
 
-    pymisp_path = args.pymisp_path or find_pymisp_path()
-    if pymisp_path is None:
-        print(
-            f"{RED}Error: Could not find PyMISP. Use --pymisp-path to specify.{RESET}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    print(f"PyMISP path: {pymisp_path}")
-    run_comparison(pymisp_path)
+    if args.pymisp_path:
+        pymisp_path = args.pymisp_path
+        print(f"Using local PyMISP: {pymisp_path}")
+        run_comparison(pymisp_path, update_readme=args.update_readme)
+    else:
+        # Try local first (faster), fall back to fetching from GitHub
+        local = find_local_pymisp()
+        if local:
+            print(f"Found local PyMISP: {local}")
+            run_comparison(local, update_readme=args.update_readme)
+        else:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                pymisp_path = fetch_pymisp(Path(tmpdir))
+                run_comparison(pymisp_path, update_readme=args.update_readme)
 
 
 if __name__ == "__main__":

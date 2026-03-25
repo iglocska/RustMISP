@@ -303,3 +303,24 @@ jobs:
           tail -50 /var/log/apache2/misp.local_error.log 2>/dev/null || echo "(empty)"
           echo "=== Worker errors ==="
           cat /tmp/misp-workers-errors.log 2>/dev/null || echo "(empty)"
+
+  # Update PyMISP parity badges in README (push to main only)
+  parity-badges:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run parity checker and update badges
+        run: python3 scripts/check_pymisp_parity.py --update-readme
+
+      - name: Commit badge updates
+        run: |
+          git diff --quiet README.md && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "chg: [docs] Update PyMISP parity badges [skip ci]"
+          git push
