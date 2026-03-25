@@ -3,6 +3,8 @@
 [![CI](https://github.com/iglocska/RustMISP/actions/workflows/ci.yml/badge.svg)](https://github.com/iglocska/RustMISP/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![PyMISP API parity](https://img.shields.io/badge/PyMISP_API_parity-99.5%25-brightgreen.svg)](scripts/check_pymisp_parity.py)
+[![PyMISP test parity](https://img.shields.io/badge/PyMISP_test_parity-78.8%25-yellow.svg)](scripts/check_pymisp_parity.py)
 
 A Rust client library for the [MISP](https://www.misp-project.org/) REST API, providing feature parity with [PyMISP](https://github.com/MISP/PyMISP).
 
